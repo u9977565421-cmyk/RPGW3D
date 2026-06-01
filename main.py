@@ -439,6 +439,102 @@ class MapEditor:
             pygame.draw.rect(self.screen, color, (screen_x + 2, screen_y + 2, cell_size - 4, cell_size - 4), 3)
             pygame.draw.circle(self.screen, color, (screen_x + cell_size // 2, screen_y + cell_size // 2), 4)
 
+    def draw_styled_help_menu(self):
+        """Draw a styled help menu matching the game's aesthetic"""
+        # Panel dimensions
+        panel_width = 500
+        panel_height = 550
+        panel_x = (EDITOR_WIDTH - panel_width) // 2
+        panel_y = (EDITOR_HEIGHT - panel_height) // 2
+        
+        # Draw semi-transparent overlay
+        overlay = pygame.Surface((EDITOR_WIDTH, EDITOR_HEIGHT))
+        overlay.set_alpha(150)
+        overlay.fill((0, 0, 0))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Draw main panel background (dark brown/tan like game UI)
+        pygame.draw.rect(self.screen, (20, 15, 10), (panel_x, panel_y, panel_width, panel_height))
+        
+        # Draw fancy border (multiple layers for depth)
+        pygame.draw.rect(self.screen, (200, 180, 100), (panel_x, panel_y, panel_width, panel_height), 4)
+        pygame.draw.rect(self.screen, (150, 130, 70), (panel_x + 2, panel_y + 2, panel_width - 4, panel_height - 4), 1)
+        
+        # Draw decorative corner elements
+        corner_size = 20
+        corners = [
+            (panel_x, panel_y),
+            (panel_x + panel_width - corner_size, panel_y),
+            (panel_x, panel_y + panel_height - corner_size),
+            (panel_x + panel_width - corner_size, panel_y + panel_height - corner_size)
+        ]
+        for cx, cy in corners:
+            pygame.draw.rect(self.screen, (200, 180, 100), (cx, cy, corner_size, corner_size), 2)
+        
+        # Draw title
+        title_surf = self.font_large.render("-- MAP EDITOR HELP --", True, (200, 180, 100))
+        title_x = panel_x + (panel_width - title_surf.get_width()) // 2
+        self.screen.blit(title_surf, (title_x, panel_y + 15))
+        
+        # Draw separator line
+        sep_y = panel_y + 45
+        pygame.draw.line(self.screen, (150, 130, 70), (panel_x + 20, sep_y), (panel_x + panel_width - 20, sep_y), 2)
+        
+        # Help content sections
+        content_y = panel_y + 60
+        line_height = 20
+        
+        help_sections = [
+            ("TOOLS", [
+                "1: Draw Wall         2: Erase Tile",
+                "3: Fill Region       4: Pick Tile",
+                "5: Place Door        6: Delete Door",
+            ]),
+            ("MOUSE", [
+                "Left Click: Use current tool",
+                "Drag: Paint/Erase multiple tiles",
+            ]),
+            ("NAVIGATION", [
+                "Arrow Keys: Pan view",
+                "+/-: Zoom in/out",
+                "G: Toggle grid display",
+            ]),
+            ("EDITING", [
+                "SPACE: Clear entire map",
+                "Ctrl+Z/Y: Undo/Redo",
+            ]),
+            ("FILE OPERATIONS", [
+                "Ctrl+S: Save map",
+                "Ctrl+L: Load map",
+                "Ctrl+N: New map",
+            ]),
+            ("OTHER", [
+                "H: Toggle this help",
+                "ESC: Exit editor",
+            ]),
+        ]
+        
+        for section_title, items in help_sections:
+            # Section title
+            section_surf = self.font_medium.render(section_title, True, (255, 200, 100))
+            self.screen.blit(section_surf, (panel_x + 25, content_y))
+            content_y += line_height + 5
+            
+            # Section items
+            for item in items:
+                item_surf = self.font_small.render(item, True, (150, 200, 255))
+                self.screen.blit(item_surf, (panel_x + 40, content_y))
+                content_y += line_height
+            
+            content_y += 5  # Extra spacing between sections
+        
+        # Draw footer with close instruction
+        footer_y = panel_y + panel_height - 30
+        pygame.draw.line(self.screen, (150, 130, 70), (panel_x + 20, footer_y), (panel_x + panel_width - 20, footer_y), 1)
+        footer_surf = self.font_small.render("Press 'H' to close this menu", True, (150, 150, 100))
+        footer_x = panel_x + (panel_width - footer_surf.get_width()) // 2
+        self.screen.blit(footer_surf, (footer_x, footer_y + 8))
+
     def draw_ui(self):
         """Draw user interface elements"""
         # Tool indicator
@@ -470,25 +566,9 @@ class MapEditor:
             door_surf = self.font_small.render(door_text, True, (255, 200, 100))
             self.screen.blit(door_surf, (10, EDITOR_HEIGHT - 30))
         
-        # Help
-        help_y = EDITOR_HEIGHT - 250
+        # Draw styled help menu if enabled
         if self.show_help:
-            help_lines = [
-                "--- CONTROLS ---",
-                "1/2/3/4: Draw/Erase/Fill/Pick",
-                "5: Place Door | 6: Delete Door",
-                "Left Click: Use current tool",
-                "Arrow Keys: Pan | +/-: Zoom",
-                "G: Toggle Grid | H: Toggle Help",
-                "SPACE: Clear Map",
-                "Ctrl+Z/Y: Undo/Redo",
-                "Ctrl+S/L/N: Save/Load/New",
-                "ESC: Exit Editor"
-            ]
-            
-            for i, line in enumerate(help_lines):
-                help_surf = self.font_small.render(line, True, (150, 200, 255))
-                self.screen.blit(help_surf, (10, help_y + i * 18))
+            self.draw_styled_help_menu()
 
     def run(self):
         """Main editor loop"""

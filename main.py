@@ -1,6 +1,9 @@
 import pygame
 import math
 import random
+import json
+import os
+from enum import Enum
 
 # --- Configuration ---
 WIDTH, HEIGHT = 800, 480
@@ -43,6 +46,401 @@ WEATHER_INTENSITY = {  # Particle density and effect intensity
 RAIN_COLOR = (100, 150, 255)
 SNOW_COLOR = (255, 255, 255)
 DUST_COLOR = (140, 120, 90)
+
+# Map Editor Configuration
+EDITOR_WIDTH = 1200
+EDITOR_HEIGHT = 800
+GRID_SIZE = 32  # Size of each grid cell in editor
+MAP_DATA_FILE = "map_data.json"
+
+class TileType(Enum):
+    EMPTY = 0
+    WALL = 1
+
+class ToolMode(Enum):
+    DRAW = 0
+    ERASE = 1
+    FILL = 2
+    PICK = 3
+
+class MapEditor:
+    """Integrated map editor for the game"""
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((EDITOR_WIDTH, EDITOR_HEIGHT))
+        pygame.display.set_caption("Wolfenstein 3D Map Editor")
+        self.clock = pygame.time.Clock()
+        self.font_small = pygame.font.SysFont("georgia", 14)
+        self.font_medium = pygame.font.SysFont("georgia", 16, bold=True)
+        self.font_large = pygame.font.SysFont("georgia", 20, bold=True)
+        
+        # Map data
+        self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        self.map_filename = MAP_DATA_FILE
+        
+        # Editor state
+        self.tool_mode = ToolMode.DRAW
+        self.current_tile = TileType.WALL
+        self.mouse_pos = (0, 0)
+        self.dragging = False
+        self.grid_offset_x = 20
+        self.grid_offset_y = 20
+        self.zoom = 1.0
+        
+        # Undo/Redo system
+        self.history = []
+        self.history_index = -1
+        self.max_history = 50
+        self.save_state()
+        
+        # UI
+        self.status_message = "Ready"
+        self.status_timer = 0
+        self.show_grid = True
+        self.show_help = False
+        
+        # Load existing map if available
+        self.load_map()
+
+    def save_state(self):
+        """Save current map state to history for undo/redo"""
+        # Remove any redo history when making new changes
+        self.history = self.history[:self.history_index + 1]
+        
+        # Deep copy current map
+        state = [row[:] for row in self.map]
+        self.history.append(state)
+        self.history_index = len(self.history) - 1
+        
+        # Limit history size
+        if len(self.history) > self.max_history:
+            self.history.pop(0)
+            self.history_index -= 1
+
+    def undo(self):
+        """Undo last change"""
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.map = [row[:] for row in self.history[self.history_index]]
+            self.set_status("Undo applied")
+
+    def redo(self):
+        """Redo last undone change"""
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.map = [row[:] for row in self.history[self.history_index]]
+            self.set_status("Redo applied")
+
+    def set_status(self, message):
+        """Set status message with timer"""
+        self.status_message = message
+        self.status_timer = 120  # 2 seconds at 60 FPS
+
+    def screen_to_grid(self, screen_x, screen_y):
+        """Convert screen coordinates to grid coordinates"""
+        grid_x = (screen_x - self.grid_offset_x) // (GRID_SIZE * self.zoom)
+        grid_y = (screen_y - self.grid_offset_y) // (GRID_SIZE * self.zoom)
+        return int(grid_x), int(grid_y)
+
+    def grid_to_screen(self, grid_x, grid_y):
+        """Convert grid coordinates to screen coordinates"""
+        screen_x = self.grid_offset_x + grid_x * GRID_SIZE * self.zoom
+        screen_y = self.grid_offset_y + grid_y * GRID_SIZE * self.zoom
+        return int(screen_x), int(screen_y)
+
+    def is_valid_grid_pos(self, grid_x, grid_y):
+        """Check if grid position is valid"""
+        return 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE
+
+    def draw_tile(self, grid_x, grid_y, tile_value=None):
+        """Draw a single tile"""
+        if not self.is_valid_grid_pos(grid_x, grid_y):
+            return
+        
+        if tile_value is not None:
+            old_value = self.map[grid_y][grid_x]
+            if old_value != tile_value:
+                self.map[grid_y][grid_x] = tile_value
+                self.set_status(f"Tile set at ({grid_x}, {grid_y})")
+        else:
+            self.map[grid_y][grid_x] = self.current_tile.value
+
+    def erase_tile(self, grid_x, grid_y):
+        """Erase a tile (set to empty)"""
+        if self.is_valid_grid_pos(grid_x, grid_y):
+            self.map[grid_y][grid_x] = TileType.EMPTY.value
+
+    def fill_region(self, start_x, start_y, fill_value):
+        """Flood fill algorithm"""
+        if not self.is_valid_grid_pos(start_x, start_y):
+            return
+        
+        target_value = self.map[start_y][start_x]
+        if target_value == fill_value:
+            return
+        
+        stack = [(start_x, start_y)]
+        filled = set()
+        
+        while stack:
+            x, y = stack.pop()
+            if (x, y) in filled:
+                continue
+            if not self.is_valid_grid_pos(x, y):
+                continue
+            if self.map[y][x] != target_value:
+                continue
+            
+            filled.add((x, y))
+            self.map[y][x] = fill_value
+            
+            # Add neighbors
+            stack.extend([(x+1, y), (x-1, y), (x, y+1), (x, y-1)])
+        
+        self.set_status(f"Filled {len(filled)} tiles")
+
+    def handle_mouse_click(self, pos, button):
+        """Handle mouse clicks"""
+        grid_x, grid_y = self.screen_to_grid(pos[0], pos[1])
+        
+        if button == 1:  # Left click
+            if self.tool_mode == ToolMode.DRAW:
+                self.draw_tile(grid_x, grid_y)
+                self.dragging = True
+            elif self.tool_mode == ToolMode.ERASE:
+                self.erase_tile(grid_x, grid_y)
+                self.dragging = True
+            elif self.tool_mode == ToolMode.FILL:
+                self.fill_region(grid_x, grid_y, self.current_tile.value)
+                self.save_state()
+            elif self.tool_mode == ToolMode.PICK:
+                if self.is_valid_grid_pos(grid_x, grid_y):
+                    self.current_tile = TileType(self.map[grid_y][grid_x])
+                    self.set_status(f"Picked tile: {self.current_tile.name}")
+
+    def handle_mouse_motion(self, pos):
+        """Handle mouse motion for dragging"""
+        self.mouse_pos = pos
+        
+        if self.dragging:
+            grid_x, grid_y = self.screen_to_grid(pos[0], pos[1])
+            if self.tool_mode == ToolMode.DRAW:
+                self.draw_tile(grid_x, grid_y)
+            elif self.tool_mode == ToolMode.ERASE:
+                self.erase_tile(grid_x, grid_y)
+
+    def handle_mouse_release(self, button):
+        """Handle mouse release"""
+        if button == 1:
+            self.dragging = False
+            if self.tool_mode in [ToolMode.DRAW, ToolMode.ERASE]:
+                self.save_state()
+
+    def handle_input(self):
+        """Handle keyboard input"""
+        keys = pygame.key.get_pressed()
+        
+        # Pan with arrow keys
+        pan_speed = 5
+        if keys[pygame.K_LEFT]:
+            self.grid_offset_x += pan_speed
+        if keys[pygame.K_RIGHT]:
+            self.grid_offset_x -= pan_speed
+        if keys[pygame.K_UP]:
+            self.grid_offset_y += pan_speed
+        if keys[pygame.K_DOWN]:
+            self.grid_offset_y -= pan_speed
+        
+        # Zoom with +/-
+        if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]:
+            if self.zoom < 2.0:
+                self.zoom *= 1.02
+        if keys[pygame.K_MINUS]:
+            if self.zoom > 0.5:
+                self.zoom *= 0.98
+
+    def handle_keypress(self, key):
+        """Handle key presses"""
+        if key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.undo()
+        elif key == pygame.K_y and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.redo()
+        elif key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.save_map()
+        elif key == pygame.K_l and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.load_map()
+        elif key == pygame.K_n and pygame.key.get_mods() & pygame.KMOD_CTRL:
+            self.new_map()
+        elif key == pygame.K_g:
+            self.show_grid = not self.show_grid
+            self.set_status(f"Grid {'enabled' if self.show_grid else 'disabled'}")
+        elif key == pygame.K_h:
+            self.show_help = not self.show_help
+        elif key == pygame.K_1:
+            self.tool_mode = ToolMode.DRAW
+            self.current_tile = TileType.WALL
+            self.set_status("Tool: Draw Wall")
+        elif key == pygame.K_2:
+            self.tool_mode = ToolMode.ERASE
+            self.set_status("Tool: Erase (Empty)")
+        elif key == pygame.K_3:
+            self.tool_mode = ToolMode.FILL
+            self.set_status("Tool: Fill")
+        elif key == pygame.K_4:
+            self.tool_mode = ToolMode.PICK
+            self.set_status("Tool: Pick Tile")
+        elif key == pygame.K_SPACE:
+            # Clear map (borders only)
+            self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+            for y in range(1, MAP_SIZE - 1):
+                for x in range(1, MAP_SIZE - 1):
+                    self.map[y][x] = 0
+            self.save_state()
+            self.set_status("Map cleared")
+
+    def new_map(self):
+        """Create a new map"""
+        self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        self.history = []
+        self.history_index = -1
+        self.save_state()
+        self.set_status("New map created")
+
+    def save_map(self):
+        """Save map to JSON file"""
+        try:
+            data = {'map': self.map, 'map_size': MAP_SIZE}
+            with open(self.map_filename, 'w') as f:
+                json.dump(data, f, indent=2)
+            self.set_status(f"Map saved to {self.map_filename}")
+        except Exception as e:
+            self.set_status(f"Error saving map: {str(e)}")
+
+    def load_map(self):
+        """Load map from JSON file"""
+        try:
+            if os.path.exists(self.map_filename):
+                with open(self.map_filename, 'r') as f:
+                    data = json.load(f)
+                    self.map = data.get('map', self.map)
+                    self.set_status(f"Map loaded from {self.map_filename}")
+                    self.history = []
+                    self.history_index = -1
+                    self.save_state()
+        except Exception as e:
+            self.set_status(f"Error loading map: {str(e)}")
+
+    def draw_grid(self):
+        """Draw the map grid"""
+        self.screen.fill((30, 30, 35))
+        
+        # Draw grid lines
+        if self.show_grid:
+            grid_color = (60, 60, 70)
+            
+            # Vertical lines
+            x = self.grid_offset_x
+            while x < EDITOR_WIDTH:
+                pygame.draw.line(self.screen, grid_color, (x, 0), (x, EDITOR_HEIGHT), 1)
+                x += int(GRID_SIZE * self.zoom)
+            
+            # Horizontal lines
+            y = self.grid_offset_y
+            while y < EDITOR_HEIGHT:
+                pygame.draw.line(self.screen, grid_color, (0, y), (EDITOR_WIDTH, y), 1)
+                y += int(GRID_SIZE * self.zoom)
+        
+        # Draw map tiles
+        for grid_y in range(MAP_SIZE):
+            for grid_x in range(MAP_SIZE):
+                screen_x, screen_y = self.grid_to_screen(grid_x, grid_y)
+                cell_size = int(GRID_SIZE * self.zoom)
+                
+                if self.map[grid_y][grid_x] == 1:
+                    # Wall tile
+                    pygame.draw.rect(self.screen, (120, 100, 80), 
+                                   (screen_x, screen_y, cell_size, cell_size))
+                    pygame.draw.rect(self.screen, (80, 60, 40), 
+                                   (screen_x, screen_y, cell_size, cell_size), 1)
+                else:
+                    # Empty tile
+                    pygame.draw.rect(self.screen, (50, 70, 50), 
+                                   (screen_x, screen_y, cell_size, cell_size))
+                    pygame.draw.rect(self.screen, (70, 90, 70), 
+                                   (screen_x, screen_y, cell_size, cell_size), 1)
+
+    def draw_ui(self):
+        """Draw user interface elements"""
+        # Tool indicator
+        tool_text = f"Tool: {self.tool_mode.name} | Tile: {self.current_tile.name}"
+        tool_surf = self.font_medium.render(tool_text, True, (200, 200, 200))
+        self.screen.blit(tool_surf, (10, 10))
+        
+        # Status message
+        if self.status_timer > 0:
+            status_surf = self.font_small.render(self.status_message, True, (150, 255, 150))
+            self.screen.blit(status_surf, (10, 35))
+            self.status_timer -= 1
+        
+        # Coordinates at cursor
+        grid_x, grid_y = self.screen_to_grid(self.mouse_pos[0], self.mouse_pos[1])
+        if self.is_valid_grid_pos(grid_x, grid_y):
+            coord_text = f"Grid: ({grid_x}, {grid_y}) | Value: {self.map[grid_y][grid_x]}"
+            coord_surf = self.font_small.render(coord_text, True, (200, 200, 200))
+            self.screen.blit(coord_surf, (10, EDITOR_HEIGHT - 60))
+        
+        # Zoom level
+        zoom_text = f"Zoom: {self.zoom:.2f}x"
+        zoom_surf = self.font_small.render(zoom_text, True, (200, 200, 200))
+        self.screen.blit(zoom_surf, (10, EDITOR_HEIGHT - 35))
+        
+        # Help
+        help_y = EDITOR_HEIGHT - 200
+        if self.show_help:
+            help_lines = [
+                "--- CONTROLS ---",
+                "1/2/3/4: Draw/Erase/Fill/Pick tools",
+                "Left Click: Use current tool",
+                "Arrow Keys: Pan view",
+                "+/-: Zoom",
+                "G: Toggle grid | H: Toggle help",
+                "SPACE: Clear map",
+                "Ctrl+Z: Undo | Ctrl+Y: Redo",
+                "Ctrl+S: Save | Ctrl+L: Load",
+                "Ctrl+N: New Map | ESC: Exit to Game"
+            ]
+            
+            for i, line in enumerate(help_lines):
+                help_surf = self.font_small.render(line, True, (150, 200, 255))
+                self.screen.blit(help_surf, (10, help_y + i * 18))
+
+    def run(self):
+        """Main editor loop"""
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self.handle_mouse_click(event.pos, event.button)
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    self.handle_mouse_release(event.button)
+                elif event.type == pygame.MOUSEMOTION:
+                    self.handle_mouse_motion(event.pos)
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    else:
+                        self.handle_keypress(event.key)
+            
+            self.handle_input()
+            self.draw_grid()
+            self.draw_ui()
+            
+            pygame.display.flip()
+            self.clock.tick(60)
+        
+        pygame.quit()
 
 class Inventory:
     def __init__(self, on_consume_callback=None):
@@ -147,7 +545,7 @@ class Game:
         
         # Systems
         self.inventory = Inventory(on_consume_callback=self.consume_item)
-        self.map = self.generate_dungeon()
+        self.map = self.load_or_generate_map()
         self.player_x, self.player_y = self.get_safe_spawn()
         self.player_angle = 0
         
@@ -207,6 +605,17 @@ class Game:
         self.torches = self.generate_torches()
         self.torch_light_range = 200  # Light radius in pixels
         self.torch_brightness = 255
+
+    def load_or_generate_map(self):
+        """Load map from file or generate a new one"""
+        try:
+            if os.path.exists(MAP_DATA_FILE):
+                with open(MAP_DATA_FILE, 'r') as f:
+                    data = json.load(f)
+                    return data.get('map', self.generate_dungeon())
+        except:
+            pass
+        return self.generate_dungeon()
 
     def generate_torches(self):
         """Generate randomly placed torches in open areas"""
@@ -815,5 +1224,53 @@ class Game:
             
             self.update(); self.draw(); pygame.display.flip(); self.clock.tick(FPS)
 
+def show_main_menu():
+    """Display main menu to choose between game and editor"""
+    pygame.init()
+    screen = pygame.display.set_mode((400, 300))
+    pygame.display.set_caption("RPGW3D - Main Menu")
+    clock = pygame.time.Clock()
+    font_large = pygame.font.SysFont("georgia", 40, bold=True)
+    font_medium = pygame.font.SysFont("georgia", 24)
+    font_small = pygame.font.SysFont("georgia", 16)
+    
+    choice = None
+    
+    while choice is None:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return None
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1:
+                    choice = "game"
+                elif event.key == pygame.K_2:
+                    choice = "editor"
+                elif event.key == pygame.K_ESCAPE:
+                    return None
+        
+        screen.fill((20, 15, 10))
+        
+        title = font_large.render("RPGW3D", True, (200, 180, 100))
+        screen.blit(title, (400//2 - title.get_width()//2, 30))
+        
+        option1 = font_medium.render("1 - Play Game", True, (100, 255, 100))
+        screen.blit(option1, (400//2 - option1.get_width()//2, 120))
+        
+        option2 = font_medium.render("2 - Map Editor", True, (100, 200, 255))
+        screen.blit(option2, (400//2 - option2.get_width()//2, 170))
+        
+        hint = font_small.render("Press ESC to quit", True, (150, 150, 100))
+        screen.blit(hint, (400//2 - hint.get_width()//2, 250))
+        
+        pygame.display.flip()
+        clock.tick(60)
+    
+    pygame.quit()
+    return choice
+
 if __name__ == "__main__":
-    Game().run()
+    choice = show_main_menu()
+    if choice == "game":
+        Game().run()
+    elif choice == "editor":
+        MapEditor().run()

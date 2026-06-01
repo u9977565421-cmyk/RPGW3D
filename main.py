@@ -58,6 +58,15 @@ EDITOR_HEIGHT = 800
 GRID_SIZE = 32  # Size of each grid cell in editor
 MAP_DATA_FILE = "map_data.json"
 
+# Wall Texture Definitions (name, base_color)
+WALL_TEXTURES = {
+    'brick': {'base': (90, 45, 35), 'accent': (50, 25, 20), 'name': 'Brick'},
+    'stone': {'base': (110, 110, 100), 'accent': (70, 70, 60), 'name': 'Stone'},
+    'metal': {'base': (100, 100, 120), 'accent': (60, 60, 80), 'name': 'Metal'},
+    'wood': {'base': (130, 80, 50), 'accent': (90, 50, 30), 'name': 'Wood'},
+    'mossy': {'base': (70, 90, 60), 'accent': (50, 70, 40), 'name': 'Mossy'}
+}
+
 class TileType(Enum):
     EMPTY = 0
     WALL = 1
@@ -69,20 +78,29 @@ class ToolMode(Enum):
     PICK = 3
     DOOR = 4
     DELETE_DOOR = 5
+    TEXTURE_SELECT = 6
 
 class MapEditor:
     """Integrated map editor for the game"""
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((EDITOR_WIDTH, EDITOR_HEIGHT))
-        pygame.display.set_caption("Wolfenstein 3D Map Editor - with Doors")
+        pygame.display.set_caption("Wolfenstein 3D Map Editor - with Textures")
         self.clock = pygame.time.Clock()
         self.font_small = pygame.font.SysFont("georgia", 14)
         self.font_medium = pygame.font.SysFont("georgia", 16, bold=True)
         self.font_large = pygame.font.SysFont("georgia", 20, bold=True)
         
-        # Map data
-        self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        # Map data - now stores texture type for each wall
+        self.map = [[{'type': 1, 'texture': 'brick'} for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        # Fill border with walls
+        for i in range(MAP_SIZE):
+            for j in range(MAP_SIZE):
+                if i == 0 or i == MAP_SIZE - 1 or j == 0 or j == MAP_SIZE - 1:
+                    self.map[i][j] = {'type': 1, 'texture': 'brick'}
+                else:
+                    self.map[i][j] = {'type': 0, 'texture': None}
+        
         self.map_filename = MAP_DATA_FILE
         
         # Doors list
@@ -91,6 +109,7 @@ class MapEditor:
         # Editor state
         self.tool_mode = ToolMode.DRAW
         self.current_tile = TileType.WALL
+        self.current_texture = 'brick'
         self.mouse_pos = (0, 0)
         self.dragging = False
         self.grid_offset_x = 20
@@ -112,13 +131,74 @@ class MapEditor:
         self.door_input_mode = None
         self.door_input_text = ""
         
+        # Texture cache
+        self.texture_cache = {}
+        self.create_textures()
+        
         # Load existing map if available
         self.load_map()
+
+    def create_textures(self):
+        """Create procedural textures for all wall types"""
+        for tex_name, colors in WALL_TEXTURES.items():
+            tex = pygame.Surface((TILE_SIZE, TILE_SIZE))
+            tex.fill(colors['base'])
+            
+            if tex_name == 'brick':
+                # Draw brick pattern
+                for y in range(0, TILE_SIZE, 16):
+                    pygame.draw.line(tex, colors['accent'], (0, y), (TILE_SIZE, y), 2)
+                for x in range(0, TILE_SIZE, 16):
+                    if (x // 16) % 2 == 0:
+                        pygame.draw.line(tex, colors['accent'], (x, 0), (x, TILE_SIZE), 1)
+            
+            elif tex_name == 'stone':
+                # Draw stone blocks with cracks
+                for _ in range(30):
+                    x = random.randint(0, TILE_SIZE - 1)
+                    y = random.randint(0, TILE_SIZE - 1)
+                    pygame.draw.rect(tex, colors['accent'], (x, y, 2, 2))
+                # Add grid pattern
+                for y in range(0, TILE_SIZE, TILE_SIZE // 2):
+                    pygame.draw.line(tex, colors['accent'], (0, y), (TILE_SIZE, y), 1)
+                for x in range(0, TILE_SIZE, TILE_SIZE // 2):
+                    pygame.draw.line(tex, colors['accent'], (x, 0), (x, TILE_SIZE), 1)
+            
+            elif tex_name == 'metal':
+                # Draw metal panels with rivets
+                for y in range(0, TILE_SIZE, 8):
+                    pygame.draw.line(tex, colors['accent'], (0, y), (TILE_SIZE, y), 1)
+                for x in range(0, TILE_SIZE, 8):
+                    pygame.draw.line(tex, colors['accent'], (x, 0), (x, TILE_SIZE), 1)
+                # Add rivets
+                for _ in range(15):
+                    x = random.randint(0, TILE_SIZE - 1)
+                    y = random.randint(0, TILE_SIZE - 1)
+                    pygame.draw.circle(tex, colors['accent'], (x, y), 1)
+            
+            elif tex_name == 'wood':
+                # Draw wood grain
+                for y in range(0, TILE_SIZE, 2):
+                    color_var = random.randint(-10, 10)
+                    wood_color = tuple(max(0, min(255, c + color_var)) for c in colors['base'])
+                    pygame.draw.line(tex, wood_color, (0, y), (TILE_SIZE, y), 1)
+            
+            elif tex_name == 'mossy':
+                # Draw moss texture
+                for y in range(0, TILE_SIZE, 4):
+                    pygame.draw.line(tex, colors['accent'], (0, y), (TILE_SIZE, y), 2)
+                for _ in range(50):
+                    x = random.randint(0, TILE_SIZE - 1)
+                    y = random.randint(0, TILE_SIZE - 1)
+                    pygame.draw.rect(tex, colors['accent'], (x, y, 1, 1))
+            
+            self.texture_cache[tex_name] = tex
 
     def save_state(self):
         """Save current map state to history for undo/redo"""
         self.history = self.history[:self.history_index + 1]
-        state = [row[:] for row in self.map]
+        # Deep copy map data including texture info
+        state = [[cell.copy() for cell in row] for row in self.map]
         self.history.append(state)
         self.history_index = len(self.history) - 1
         
@@ -130,14 +210,14 @@ class MapEditor:
         """Undo last change"""
         if self.history_index > 0:
             self.history_index -= 1
-            self.map = [row[:] for row in self.history[self.history_index]]
+            self.map = [[cell.copy() for cell in row] for row in self.history[self.history_index]]
             self.set_status("Undo applied")
 
     def redo(self):
         """Redo last undone change"""
         if self.history_index < len(self.history) - 1:
             self.history_index += 1
-            self.map = [row[:] for row in self.history[self.history_index]]
+            self.map = [[cell.copy() for cell in row] for row in self.history[self.history_index]]
             self.set_status("Redo applied")
 
     def set_status(self, message):
@@ -161,30 +241,30 @@ class MapEditor:
         """Check if grid position is valid"""
         return 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE
 
-    def draw_tile(self, grid_x, grid_y, tile_value=None):
+    def draw_tile(self, grid_x, grid_y, tile_value=None, texture=None):
         """Draw a single tile"""
         if not self.is_valid_grid_pos(grid_x, grid_y):
             return
         
         if tile_value is not None:
-            old_value = self.map[grid_y][grid_x]
+            old_value = self.map[grid_y][grid_x]['type']
             if old_value != tile_value:
-                self.map[grid_y][grid_x] = tile_value
+                self.map[grid_y][grid_x] = {'type': tile_value, 'texture': texture or self.current_texture}
                 self.set_status(f"Tile set at ({grid_x}, {grid_y})")
         else:
-            self.map[grid_y][grid_x] = self.current_tile.value
+            self.map[grid_y][grid_x] = {'type': self.current_tile.value, 'texture': self.current_texture}
 
     def erase_tile(self, grid_x, grid_y):
         """Erase a tile (set to empty)"""
         if self.is_valid_grid_pos(grid_x, grid_y):
-            self.map[grid_y][grid_x] = TileType.EMPTY.value
+            self.map[grid_y][grid_x] = {'type': TileType.EMPTY.value, 'texture': None}
 
-    def fill_region(self, start_x, start_y, fill_value):
+    def fill_region(self, start_x, start_y, fill_value, texture=None):
         """Flood fill algorithm"""
         if not self.is_valid_grid_pos(start_x, start_y):
             return
         
-        target_value = self.map[start_y][start_x]
+        target_value = self.map[start_y][start_x]['type']
         if target_value == fill_value:
             return
         
@@ -197,15 +277,15 @@ class MapEditor:
                 continue
             if not self.is_valid_grid_pos(x, y):
                 continue
-            if self.map[y][x] != target_value:
+            if self.map[y][x]['type'] != target_value:
                 continue
             
             filled.add((x, y))
-            self.map[y][x] = fill_value
+            self.map[y][x] = {'type': fill_value, 'texture': texture or self.current_texture}
             
             stack.extend([(x+1, y), (x-1, y), (x, y+1), (x, y-1)])
         
-        self.set_status(f"Filled {len(filled)} tiles")
+        self.set_status(f"Filled {len(filled)} tiles with {WALL_TEXTURES[self.current_texture]['name']}")
 
     def place_door(self, grid_x, grid_y):
         """Place a door at grid coordinates"""
@@ -264,8 +344,11 @@ class MapEditor:
                 self.save_state()
             elif self.tool_mode == ToolMode.PICK:
                 if self.is_valid_grid_pos(grid_x, grid_y):
-                    self.current_tile = TileType(self.map[grid_y][grid_x])
-                    self.set_status(f"Picked tile: {self.current_tile.name}")
+                    cell = self.map[grid_y][grid_x]
+                    self.current_tile = TileType(cell['type'])
+                    if cell['type'] == 1:
+                        self.current_texture = cell['texture']
+                    self.set_status(f"Picked tile: {self.current_tile.name} - {WALL_TEXTURES.get(self.current_texture, {}).get('name', 'N/A')}")
             elif self.tool_mode == ToolMode.DOOR:
                 self.place_door(grid_x, grid_y)
             elif self.tool_mode == ToolMode.DELETE_DOOR:
@@ -330,7 +413,7 @@ class MapEditor:
         elif key == pygame.K_1:
             self.tool_mode = ToolMode.DRAW
             self.current_tile = TileType.WALL
-            self.set_status("Tool: Draw Wall")
+            self.set_status(f"Tool: Draw Wall ({WALL_TEXTURES[self.current_texture]['name']})")
         elif key == pygame.K_2:
             self.tool_mode = ToolMode.ERASE
             self.set_status("Tool: Erase (Empty)")
@@ -346,17 +429,35 @@ class MapEditor:
         elif key == pygame.K_6:
             self.tool_mode = ToolMode.DELETE_DOOR
             self.set_status("Tool: Delete Door (Click door to delete)")
+        elif key == pygame.K_7:
+            self.tool_mode = ToolMode.TEXTURE_SELECT
+            self.set_status("Tool: Texture Selector - Use R/T/M/W/O to choose")
+        # Texture shortcuts
+        elif key == pygame.K_r:
+            self.current_texture = 'brick'
+            self.set_status(f"Texture: {WALL_TEXTURES['brick']['name']}")
+        elif key == pygame.K_t:
+            self.current_texture = 'stone'
+            self.set_status(f"Texture: {WALL_TEXTURES['stone']['name']}")
+        elif key == pygame.K_m:
+            self.current_texture = 'metal'
+            self.set_status(f"Texture: {WALL_TEXTURES['metal']['name']}")
+        elif key == pygame.K_w:
+            self.current_texture = 'wood'
+            self.set_status(f"Texture: {WALL_TEXTURES['wood']['name']}")
+        elif key == pygame.K_o:
+            self.current_texture = 'mossy'
+            self.set_status(f"Texture: {WALL_TEXTURES['mossy']['name']}")
         elif key == pygame.K_SPACE:
-            self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
-            for y in range(1, MAP_SIZE - 1):
-                for x in range(1, MAP_SIZE - 1):
-                    self.map[y][x] = 0
-            self.save_state()
-            self.set_status("Map cleared")
+            self.new_map()
 
     def new_map(self):
         """Create a new map"""
-        self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        self.map = [[{'type': 1, 'texture': 'brick'} for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        # Fill interior with empty
+        for y in range(1, MAP_SIZE - 1):
+            for x in range(1, MAP_SIZE - 1):
+                self.map[y][x] = {'type': 0, 'texture': None}
         self.doors = []
         self.history = []
         self.history_index = -1
@@ -366,8 +467,19 @@ class MapEditor:
     def save_map(self):
         """Save map to JSON file"""
         try:
+            # Convert map to serializable format
+            map_data = []
+            for row in self.map:
+                row_data = []
+                for cell in row:
+                    row_data.append({
+                        'type': cell['type'],
+                        'texture': cell['texture']
+                    })
+                map_data.append(row_data)
+            
             data = {
-                'map': self.map,
+                'map': map_data,
                 'map_size': MAP_SIZE,
                 'doors': self.doors
             }
@@ -383,7 +495,24 @@ class MapEditor:
             if os.path.exists(self.map_filename):
                 with open(self.map_filename, 'r') as f:
                     data = json.load(f)
-                    self.map = data.get('map', self.map)
+                    map_data = data.get('map', None)
+                    
+                    # Convert loaded data to proper format
+                    if map_data:
+                        self.map = []
+                        for row in map_data:
+                            new_row = []
+                            for cell in row:
+                                if isinstance(cell, dict):
+                                    new_row.append(cell)
+                                else:
+                                    # Legacy format - convert old integer tiles
+                                    new_row.append({
+                                        'type': cell,
+                                        'texture': 'brick' if cell == 1 else None
+                                    })
+                            self.map.append(new_row)
+                    
                     self.doors = data.get('doors', [])
                     self.set_status(f"Loaded map with {len(self.doors)} door(s)")
                     self.history = []
@@ -409,18 +538,28 @@ class MapEditor:
                 pygame.draw.line(self.screen, grid_color, (0, y), (EDITOR_WIDTH, y), 1)
                 y += int(GRID_SIZE * self.zoom)
         
-        # Draw map tiles
+        # Draw map tiles with textures
         for grid_y in range(MAP_SIZE):
             for grid_x in range(MAP_SIZE):
                 screen_x, screen_y = self.grid_to_screen(grid_x, grid_y)
                 cell_size = int(GRID_SIZE * self.zoom)
                 
-                if self.map[grid_y][grid_x] == 1:
-                    pygame.draw.rect(self.screen, (120, 100, 80), 
-                                   (screen_x, screen_y, cell_size, cell_size))
+                cell = self.map[grid_y][grid_x]
+                
+                if cell['type'] == 1:  # Wall
+                    # Draw textured wall
+                    texture_name = cell.get('texture', 'brick')
+                    if texture_name in self.texture_cache:
+                        tex = self.texture_cache[texture_name]
+                        scaled_tex = pygame.transform.scale(tex, (cell_size, cell_size))
+                        self.screen.blit(scaled_tex, (screen_x, screen_y))
+                    else:
+                        # Fallback to solid color
+                        pygame.draw.rect(self.screen, (120, 100, 80), 
+                                       (screen_x, screen_y, cell_size, cell_size))
                     pygame.draw.rect(self.screen, (80, 60, 40), 
                                    (screen_x, screen_y, cell_size, cell_size), 1)
-                else:
+                else:  # Empty
                     pygame.draw.rect(self.screen, (50, 70, 50), 
                                    (screen_x, screen_y, cell_size, cell_size))
                     pygame.draw.rect(self.screen, (70, 90, 70), 
@@ -434,7 +573,7 @@ class MapEditor:
             screen_x, screen_y = self.grid_to_screen(grid_x, grid_y)
             cell_size = int(GRID_SIZE * self.zoom)
             
-            # Door color (yellow for normal, red for selected)
+            # Door color (yellow for normal, orange for selected)
             color = (255, 100, 0) if door == self.selected_door else (255, 200, 0)
             pygame.draw.rect(self.screen, color, (screen_x + 2, screen_y + 2, cell_size - 4, cell_size - 4), 3)
             pygame.draw.circle(self.screen, color, (screen_x + cell_size // 2, screen_y + cell_size // 2), 4)
@@ -442,8 +581,8 @@ class MapEditor:
     def draw_styled_help_menu(self):
         """Draw a styled help menu matching the game's aesthetic"""
         # Panel dimensions
-        panel_width = 500
-        panel_height = 550
+        panel_width = 550
+        panel_height = 620
         panel_x = (EDITOR_WIDTH - panel_width) // 2
         panel_y = (EDITOR_HEIGHT - panel_height) // 2
         
@@ -482,13 +621,18 @@ class MapEditor:
         
         # Help content sections
         content_y = panel_y + 60
-        line_height = 20
+        line_height = 18
         
         help_sections = [
             ("TOOLS", [
                 "1: Draw Wall         2: Erase Tile",
                 "3: Fill Region       4: Pick Tile",
                 "5: Place Door        6: Delete Door",
+                "7: Texture Selector",
+            ]),
+            ("TEXTURES", [
+                "R: Brick    T: Stone    M: Metal",
+                "W: Wood     O: Mossy",
             ]),
             ("MOUSE", [
                 "Left Click: Use current tool",
@@ -518,15 +662,15 @@ class MapEditor:
             # Section title
             section_surf = self.font_medium.render(section_title, True, (255, 200, 100))
             self.screen.blit(section_surf, (panel_x + 25, content_y))
-            content_y += line_height + 5
+            content_y += line_height
             
             # Section items
             for item in items:
                 item_surf = self.font_small.render(item, True, (150, 200, 255))
                 self.screen.blit(item_surf, (panel_x + 40, content_y))
-                content_y += line_height
+                content_y += line_height - 2
             
-            content_y += 5  # Extra spacing between sections
+            content_y += 3  # Extra spacing between sections
         
         # Draw footer with close instruction
         footer_y = panel_y + panel_height - 30
@@ -560,11 +704,17 @@ class MapEditor:
         zoom_surf = self.font_small.render(zoom_text, True, (200, 200, 200))
         self.screen.blit(zoom_surf, (10, EDITOR_HEIGHT - 55))
         
+        # Current texture display
+        current_tex_name = WALL_TEXTURES.get(self.current_texture, {}).get('name', 'Unknown')
+        texture_text = f"Texture: {current_tex_name}"
+        texture_surf = self.font_small.render(texture_text, True, (200, 220, 100))
+        self.screen.blit(texture_surf, (10, EDITOR_HEIGHT - 30))
+        
         # Selected door info
         if self.selected_door:
             door_text = f"Door: {self.selected_door['name']} | Key: {self.selected_door['key_required']}"
             door_surf = self.font_small.render(door_text, True, (255, 200, 100))
-            self.screen.blit(door_surf, (10, EDITOR_HEIGHT - 30))
+            self.screen.blit(door_surf, (EDITOR_WIDTH - 400, EDITOR_HEIGHT - 30))
         
         # Draw styled help menu if enabled
         if self.show_help:
@@ -801,7 +951,9 @@ class Game:
         while len(vegetation) < 25 and attempts < 200:
             x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
             y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
-            if self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)] == 0:
+            map_cell = self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)]
+            map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+            if map_type == 0:
                 veg_type = random.choice(['tree', 'shrub'])
                 vegetation.append({
                     "x": x, "y": y, 
@@ -813,12 +965,12 @@ class Game:
 
     def generate_interior(self):
         """Generate a simple interior map"""
-        interior = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        interior = [[{'type': 1, 'texture': 'brick'} for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
         for y in range(5, 25):
             for x in range(5, 25):
-                interior[y][x] = 0
+                interior[y][x] = {'type': 0, 'texture': None}
         for x in range(8, 22):
-            interior[12][x] = 1
+            interior[12][x] = {'type': 1, 'texture': 'brick'}
         return interior
 
     def load_or_generate_map(self):
@@ -827,7 +979,19 @@ class Game:
             if os.path.exists(MAP_DATA_FILE):
                 with open(MAP_DATA_FILE, 'r') as f:
                     data = json.load(f)
-                    return data.get('map', self.generate_dungeon())
+                    map_data = data.get('map', None)
+                    if map_data:
+                        # Convert to new format if needed
+                        processed_map = []
+                        for row in map_data:
+                            new_row = []
+                            for cell in row:
+                                if isinstance(cell, dict):
+                                    new_row.append(cell)
+                                else:
+                                    new_row.append({'type': cell, 'texture': 'brick' if cell == 1 else None})
+                            processed_map.append(new_row)
+                        return processed_map
         except:
             pass
         return self.generate_dungeon()
@@ -839,7 +1003,9 @@ class Game:
         while len(torches) < 15 and attempts < 100:
             x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
             y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
-            if self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)] == 0:
+            map_cell = self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)]
+            map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+            if map_type == 0:
                 torches.append({"x": x, "y": y, "light": 255})
             attempts += 1
         return torches
@@ -923,7 +1089,9 @@ class Game:
                 tile_y = self.minimap_y + 2 + y * cell_size
                 
                 if self.fog_of_war[y][x]:
-                    if self.map[y][x] == 1:
+                    map_cell = self.map[y][x]
+                    map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                    if map_type == 1:
                         pygame.draw.rect(self.screen, (100, 50, 50), (tile_x, tile_y, cell_size, cell_size))
                     else:
                         pygame.draw.rect(self.screen, (50, 80, 50), (tile_x, tile_y, cell_size, cell_size))
@@ -1011,21 +1179,24 @@ class Game:
         return (5, 5, 20)
 
     def generate_dungeon(self):
-        d_map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        d_map = [[{'type': 1, 'texture': 'brick'} for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
         x, y = MAP_SIZE // 2, MAP_SIZE // 2
-        d_map[y][x] = 0
+        d_map[y][x] = {'type': 0, 'texture': None}
         for _ in range(600):
             move = random.choice([(0,1), (0,-1), (1,0), (-1,0)])
             nx, ny = x + move[0], y + move[1]
             if 1 <= nx < MAP_SIZE-1 and 1 <= ny < MAP_SIZE-1:
                 x, y = nx, ny
-                d_map[y][x] = 0
+                d_map[y][x] = {'type': 0, 'texture': None}
         return d_map
 
     def get_safe_spawn(self):
         for _ in range(100):
             r, c = random.randint(1, MAP_SIZE-1), random.randint(1, MAP_SIZE-1)
-            if self.map[r][c] == 0: return (c * TILE_SIZE + 32, r * TILE_SIZE + 32)
+            map_cell = self.map[r][c]
+            map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+            if map_type == 0: 
+                return (c * TILE_SIZE + 32, r * TILE_SIZE + 32)
         return (128, 128)
 
     def create_brick_texture(self):
@@ -1226,7 +1397,9 @@ class Game:
             sin_a, cos_a = math.sin(angle), math.cos(angle)
             for d in range(1, MAX_DEPTH, 2):
                 tx, ty = self.player_x + d * cos_a, self.player_y + d * sin_a
-                if self.map[int(ty/TILE_SIZE)][int(tx/TILE_SIZE)] == 1:
+                map_cell = self.map[int(ty/TILE_SIZE)][int(tx/TILE_SIZE)]
+                map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                if map_type == 1:
                     dist = d * math.cos(self.player_angle - angle)
                     self.depth_buffer[ray] = dist
                     wh = int(WALL_HEIGHT_MULTIPLIER / (dist + PARTICLE_EPSILON))

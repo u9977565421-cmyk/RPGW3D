@@ -47,6 +47,11 @@ RAIN_COLOR = (100, 150, 255)
 SNOW_COLOR = (255, 255, 255)
 DUST_COLOR = (140, 120, 90)
 
+# Vegetation Colors
+TREE_TRUNK_COLOR = (101, 67, 33)
+TREE_FOLIAGE_COLOR = (34, 139, 34)
+SHRUB_COLOR = (50, 100, 50)
+
 # Map Editor Configuration
 EDITOR_WIDTH = 1200
 EDITOR_HEIGHT = 800
@@ -586,13 +591,22 @@ class Game:
         self.consume_message = ""
         self.consume_message_timer = 0
         
-        # Teleport/Door System
+        # Door/Teleport System with keys
         self.doors = [
-            {"x": 500, "y": 500, "name": "Mystery Portal", "key_required": "Brass Key", "teleport_x": 1000, "teleport_y": 1000}
+            {
+                "x": 500, "y": 500, 
+                "name": "Wooden Door", 
+                "key_required": "Brass Key",
+                "interior_map": self.generate_interior(),
+                "exit_x": 100, "exit_y": 100,
+                "entry_exterior": (500, 500)
+            }
         ]
         self.door_range = 60  # Distance to interact with door
-        self.in_interior = False
-        self.exterior_spawn = (128, 128)  # Remember where player came from
+        self.is_in_interior = False
+        self.current_interior_map = None
+        self.exterior_map = self.map
+        self.exterior_player_pos = None
         
         # Fog of War (Minimap visibility tracking)
         self.fog_of_war = [[False for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
@@ -605,6 +619,39 @@ class Game:
         self.torches = self.generate_torches()
         self.torch_light_range = 200  # Light radius in pixels
         self.torch_brightness = 255
+        
+        # Vegetation system
+        self.vegetation = self.generate_vegetation()
+
+    def generate_vegetation(self):
+        """Generate trees and shrubs in open areas"""
+        vegetation = []
+        attempts = 0
+        while len(vegetation) < 25 and attempts < 200:  # Place up to 25 vegetation objects
+            x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
+            y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
+            # Check if position is in open area (not wall)
+            if self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)] == 0:
+                veg_type = random.choice(['tree', 'shrub'])
+                vegetation.append({
+                    "x": x, "y": y, 
+                    "type": veg_type,
+                    "size": random.randint(8, 15) if veg_type == 'tree' else random.randint(4, 8)
+                })
+            attempts += 1
+        return vegetation
+
+    def generate_interior(self):
+        """Generate a simple interior map"""
+        interior = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        # Create a simple room
+        for y in range(5, 25):
+            for x in range(5, 25):
+                interior[y][x] = 0
+        # Add some interior walls
+        for x in range(8, 22):
+            interior[12][x] = 1
+        return interior
 
     def load_or_generate_map(self):
         """Load map from file or generate a new one"""
@@ -660,15 +707,11 @@ class Game:
 
     def draw_sun_moon(self):
         """Draw sun/moon based on time of day"""
-        # Calculate sun/moon position across the sky
-        # 0-300: night (moon), 300-900: sunrise to daytime, 900-1500: day, 1500-1800: sunset, 1800-2400: night
-        
         sun_x = WIDTH // 2
         sun_y = HEIGHT // 4
         sun_size = 40
         
         if 600 <= self.time < 1800:  # Sun visible during day
-            # Sun moves across sky from left to right
             progress = (self.time - 600) / (1800 - 600)
             sun_x = int(50 + progress * (WIDTH - 100))
             sun_y = int(HEIGHT // 4 + 30 * math.sin(progress * math.pi))
@@ -677,11 +720,10 @@ class Game:
             pygame.draw.circle(self.screen, (255, 200, 50), (sun_x, sun_y), sun_size + 5)
             pygame.draw.circle(self.screen, (255, 220, 100), (sun_x, sun_y), sun_size)
         else:  # Moon visible at night
-            # Moon position roughly opposite to sun
             if self.time < 600:
-                progress = self.time / 600  # Morning approach
+                progress = self.time / 600
             else:
-                progress = (self.time - 1800) / 600  # Evening to night
+                progress = (self.time - 1800) / 600
             
             moon_x = int(WIDTH // 2 + 100 * math.cos(progress * math.pi))
             moon_y = int(HEIGHT // 4 + 30)
@@ -693,17 +735,15 @@ class Game:
 
     def draw_stars(self):
         """Draw stars at night"""
-        # Only show stars when it's dark
         if self.time < 600 or self.time > 1800:
-            # Use time-based seed for consistent star positions
-            random.seed(42)  # Consistent star field
+            random.seed(42)
             for _ in range(100):
                 star_x = random.randint(0, WIDTH)
                 star_y = random.randint(0, HEIGHT // 2)
                 star_size = random.randint(1, 2)
-                brightness = int(200 + 55 * math.sin(self.time / 100))  # Twinkling effect
+                brightness = int(200 + 55 * math.sin(self.time / 100))
                 pygame.draw.circle(self.screen, (brightness, brightness, brightness), (star_x, star_y), star_size)
-            random.seed()  # Reset seed
+            random.seed()
 
     def draw_minimap(self):
         """Draw minimap with fog of war"""
@@ -711,27 +751,22 @@ class Game:
         minimap_h = self.minimap_size
         cell_size = minimap_w / MAP_SIZE
         
-        # Draw background
         pygame.draw.rect(self.screen, (20, 20, 20), (self.minimap_x, self.minimap_y, minimap_w + 4, minimap_h + 4))
         pygame.draw.rect(self.screen, (100, 100, 100), (self.minimap_x, self.minimap_y, minimap_w + 4, minimap_h + 4), 2)
         
-        # Draw map
         for y in range(MAP_SIZE):
             for x in range(MAP_SIZE):
                 tile_x = self.minimap_x + 2 + x * cell_size
                 tile_y = self.minimap_y + 2 + y * cell_size
                 
                 if self.fog_of_war[y][x]:
-                    # Revealed tile
                     if self.map[y][x] == 1:
                         pygame.draw.rect(self.screen, (100, 50, 50), (tile_x, tile_y, cell_size, cell_size))
                     else:
                         pygame.draw.rect(self.screen, (50, 80, 50), (tile_x, tile_y, cell_size, cell_size))
                 else:
-                    # Unrevealed (fog of war)
                     pygame.draw.rect(self.screen, (30, 30, 30), (tile_x, tile_y, cell_size, cell_size))
         
-        # Draw player position on minimap
         player_map_x = self.minimap_x + 2 + (self.player_x / (MAP_SIZE * TILE_SIZE)) * minimap_w
         player_map_y = self.minimap_y + 2 + (self.player_y / (MAP_SIZE * TILE_SIZE)) * minimap_h
         pygame.draw.circle(self.screen, (0, 255, 0), (int(player_map_x), int(player_map_y)), 3)
@@ -741,7 +776,7 @@ class Game:
         self.health = min(self.max_health, self.health + health_restore)
         self.mana = min(self.max_mana, self.mana + mana_restore)
         self.consume_message = f"Used {item_name}! +{health_restore}HP +{mana_restore}MP"
-        self.consume_message_timer = 120  # Display for 2 seconds at 60 FPS
+        self.consume_message_timer = 120
 
     def has_key(self, key_name):
         """Check if player has a specific key in inventory"""
@@ -762,18 +797,29 @@ class Game:
         """Attempt to use a door if nearby"""
         door = self.check_nearby_doors()
         if door:
-            # Check if key is required
-            if "key_required" in door:
+            if "key_required" in door and door["key_required"]:
                 if not self.has_key(door["key_required"]):
                     self.consume_message = f"Need {door['key_required']}!"
                     self.consume_message_timer = 120
                     return
-            # Teleport!
-            self.exterior_spawn = (self.player_x, self.player_y)
-            self.player_x = door["teleport_x"]
-            self.player_y = door["teleport_y"]
-            self.in_interior = True
+            
+            # Enter interior
+            self.exterior_player_pos = (self.player_x, self.player_y)
+            self.exterior_map = self.map
+            self.map = door["interior_map"]
+            self.player_x = door["exit_x"]
+            self.player_y = door["exit_y"]
+            self.is_in_interior = True
             self.consume_message = f"Entered {door['name']}!"
+            self.consume_message_timer = 120
+
+    def exit_interior(self):
+        """Exit from interior back to exterior"""
+        if self.is_in_interior:
+            self.map = self.exterior_map
+            self.player_x, self.player_y = self.exterior_player_pos
+            self.is_in_interior = False
+            self.consume_message = "Exited interior"
             self.consume_message_timer = 120
 
     def lerp_color(self, c1, c2, t):
@@ -781,11 +827,6 @@ class Game:
 
     def get_smooth_ambient_light(self):
         """Calculate smooth ambient light based on time of day"""
-        # Sunrise: 300-900 (transition from dark to bright)
-        # Day: 900-1500 (bright)
-        # Sunset: 1500-1800 (transition from bright to dark)
-        # Night: 1800-300 (dark)
-        
         t = self.time
         
         if 300 <= t < 900:  # Sunrise
@@ -796,7 +837,7 @@ class Game:
         elif 1500 <= t < 1800:  # Sunset
             progress = (t - 1500) / 300
             return int(255 - (255 - 70) * progress)
-        else:  # Night (1800-300 next cycle)
+        else:  # Night
             return 70
 
     def get_sky_color(self):
@@ -840,10 +881,8 @@ class Game:
             texture_path = os.path.join(os.path.dirname(__file__), "Dirt_Road_64x64.png")
             return pygame.image.load(texture_path).convert()
         except:
-            # Fallback: create a simple dirt texture if file not found
             surf = pygame.Surface((64, 64))
             surf.fill((101, 84, 60))
-            # Add some variation
             for _ in range(100):
                 x = random.randint(0, 63)
                 y = random.randint(0, 63)
@@ -858,7 +897,6 @@ class Game:
             sprite_path = os.path.join(os.path.dirname(__file__), CLOUD_SPRITE_PATH)
             return pygame.image.load(sprite_path).convert_alpha()
         except:
-            # Fallback: create a simple cloud shape if file not found
             surf = pygame.Surface((100, 40), pygame.SRCALPHA)
             pygame.draw.circle(surf, (255, 255, 255, 200), (20, 20), 15)
             pygame.draw.circle(surf, (255, 255, 255, 200), (40, 15), 18)
@@ -878,17 +916,17 @@ class Game:
         """Generate clouds with parallax depth layers"""
         clouds = []
         for layer in range(CLOUD_LAYERS):
-            num_clouds = 3 + layer  # More clouds
-            depth = layer / (CLOUD_LAYERS - 1) if CLOUD_LAYERS > 1 else 1.0  # 0 to 1
+            num_clouds = 3 + layer
+            depth = layer / (CLOUD_LAYERS - 1) if CLOUD_LAYERS > 1 else 1.0
             for _ in range(num_clouds):
-                scale = 2.0 + (depth * 2.2)  # Much bigger clouds!
+                scale = 2.0 + (depth * 2.2)
                 clouds.append({
                     'x': random.randint(0, WIDTH),
                     'y': random.randint(10, 100 + layer * 20),
                     'scale': scale,
                     'depth': depth,
                     'speed_mult': CLOUD_SPEED_MULTIPLIERS[layer],
-                    'alpha': 150 - int(depth * 50)  # Farther clouds are dimmer
+                    'alpha': 150 - int(depth * 50)
                 })
         return clouds
 
@@ -901,15 +939,13 @@ class Game:
                 'y': random.uniform(0, MAP_SIZE*TILE_SIZE),
                 'z': random.uniform(-180, 180),
                 'speed': random.uniform(4, 8),
-                'wind_accel': 0  # For sandstorm wind effect
+                'wind_accel': 0
             }
             self.particles.append(p)
 
     def transition_weather(self):
         """Randomly transition to a new weather type"""
-        current_idx = WEATHER_TYPES.index(self.weather_type) if self.weather_type in WEATHER_TYPES else 0
-        # Prefer transitioning away from current weather, but allow stay sometimes
-        if random.random() < 0.3:  # 30% chance to stay same weather
+        if random.random() < 0.3:
             new_weather = self.weather_type
         else:
             new_weather = random.choice([w for w in WEATHER_TYPES if w != self.weather_type])
@@ -919,9 +955,6 @@ class Game:
         min_dur, max_dur = WEATHER_TRANSITIONS.get(new_weather, (60, 300))
         self.weather_duration = random.randint(min_dur, max_dur)
         
-        # Update particle count for new weather
-        old_particle_count = len(self.particles)
-        new_particle_count = WEATHER_INTENSITY.get(new_weather, {}).get('count', 0)
         if new_weather == 'none':
             self.particles = []
         else:
@@ -932,29 +965,23 @@ class Game:
         self.time = (self.time + 0.5) % 2400
         self.ambient_light = self.get_smooth_ambient_light()
         
-        # Add torch lighting at night
         if self.ambient_light < 150:
             self.ambient_light = min(255, self.ambient_light + self.get_torch_lighting(self.player_x, self.player_y))
         
-        # Update fog of war for minimap
         self.update_fog_of_war()
         
-        # Update consume message timer
         if self.consume_message_timer > 0:
             self.consume_message_timer -= 1
         
-        # Weather system update
         self.weather_timer += 1
         if self.weather_timer >= self.weather_duration:
             self.transition_weather()
         
-        # Update wind for sandstorms
         if 'sand' in self.weather_type:
             self.wind_effect = math.sin(self.weather_timer * 0.02) * 2.0
         else:
             self.wind_effect = 0
         
-        # Quest Pickup Logic
         dist = math.sqrt((self.player_x - self.quest_item_pos[0])**2 + (self.player_y - self.quest_item_pos[1])**2)
         if dist < QUEST_PICKUP_DISTANCE and not self.quest_completed:
             self.quest_completed = True
@@ -966,9 +993,33 @@ class Game:
             for p in self.particles:
                 p['z'] += p['speed']
                 if p['z'] > 180: p['z'] = -180
-                # Wind effect for sandstorms
                 if 'sand' in self.weather_type:
                     p['wind_accel'] = self.wind_effect
+
+    def draw_vegetation(self):
+        """Draw trees and shrubs in the world"""
+        for veg in self.vegetation:
+            dx, dy = veg["x"] - self.player_x, veg["y"] - self.player_y
+            px = dx * math.cos(-self.player_angle) - dy * math.sin(-self.player_angle)
+            py = dx * math.sin(-self.player_angle) + dy * math.cos(-self.player_angle)
+            
+            if px > 10:
+                sx = (py / px) * (WIDTH / (2 * math.tan(FOV/2))) + (WIDTH / 2)
+                if 0 <= sx < WIDTH:
+                    ray_idx = int(sx / (WIDTH / NUM_RAYS))
+                    if 0 <= ray_idx < NUM_RAYS and px < self.depth_buffer[ray_idx]:
+                        size = max(3, int(300 / px))
+                        
+                        if veg["type"] == "tree":
+                            # Draw tree: trunk and foliage
+                            trunk_height = int(size * 0.4)
+                            pygame.draw.rect(self.screen, TREE_TRUNK_COLOR, 
+                                           (int(sx) - size//8, HEIGHT//2 - trunk_height, size//4, trunk_height))
+                            pygame.draw.circle(self.screen, TREE_FOLIAGE_COLOR, 
+                                            (int(sx), HEIGHT//2 - trunk_height - size//3), size//2)
+                        else:
+                            # Draw shrub
+                            pygame.draw.circle(self.screen, SHRUB_COLOR, (int(sx), HEIGHT//2), size)
 
     def draw(self):
         # 1. Sky & Ground
@@ -982,10 +1033,9 @@ class Game:
         for c in self.clouds:
             scaled_sprite = self.get_scaled_cloud_sprite(c['scale'])
             
-            # Darken clouds during heavy rain
             if self.weather_type == 'rain_heavy':
-                cloud_alpha = max(50, c['alpha'] - 80)  # Make very dark
-                tint_color = (50, 50, 50)  # Grey tint for stormy look
+                cloud_alpha = max(50, c['alpha'] - 80)
+                tint_color = (50, 50, 50)
                 scaled_sprite.fill(tint_color, special_flags=pygame.BLEND_RGB_MULT)
             else:
                 cloud_alpha = c['alpha']
@@ -993,7 +1043,6 @@ class Game:
             scaled_sprite.set_alpha(cloud_alpha)
             cloud_width = scaled_sprite.get_width()
             x_pos = c['x']
-            # Draw cloud wrapping at screen edges
             self.screen.blit(scaled_sprite, (x_pos, c['y']))
             if x_pos + cloud_width < WIDTH:
                 self.screen.blit(scaled_sprite, (x_pos + WIDTH + 50, c['y']))
@@ -1006,16 +1055,13 @@ class Game:
             shade = max(0.1, min(1.0, ((y - HEIGHT/2) / (HEIGHT/2.0)) * 1.5))
             intensity = int(255 * shade * t_mult)
             
-            # Calculate texture offset based on distance (for proper tiling effect)
             distance = (y - HEIGHT//2) / (HEIGHT//2)
             tex_offset = int((self.player_angle * 100 + distance * 1000) % 64)
             
-            # Draw a row using the floor texture
             for x in range(0, WIDTH, 64):
                 try:
                     tex_col = self.floor_tex.subsurface((tex_offset, 0, 64, 1))
                 except ValueError:
-                    # Fallback if subsurface fails
                     tex_col = pygame.Surface((64, 1))
                     tex_col.fill((101, 84, 60))
                 
@@ -1043,12 +1089,14 @@ class Game:
                     break
             else: self.depth_buffer[ray] = MAX_DEPTH
 
+        # Draw objects
+        self.draw_vegetation()  # Draw vegetation
         self.draw_quest_item()
-        self.draw_doors()  # Draw door indicators
-        self.draw_torches()  # Draw torch indicators
+        self.draw_doors()
+        self.draw_torches()
         self.draw_weather()
         self.draw_hud()
-        self.draw_minimap()  # Draw minimap with fog of war
+        self.draw_minimap()
         self.inventory.draw(self.screen)
 
     def draw_torches(self):
@@ -1062,10 +1110,8 @@ class Game:
                 if 0 <= sx < WIDTH:
                     ray_idx = int(sx / (WIDTH / NUM_RAYS))
                     if 0 <= ray_idx < NUM_RAYS and px < self.depth_buffer[ray_idx]:
-                        # Draw torch as a flickering flame
                         size = max(3, int(100 / px))
                         flicker = int(20 * math.sin(pygame.time.get_ticks() / 100))
-                        # Clamp color values to valid range (0-255)
                         flame_color = (
                             max(0, min(255, 255 - flicker)),
                             max(0, min(255, 150 - flicker//2)),
@@ -1084,11 +1130,11 @@ class Game:
                 if 0 <= sx < WIDTH:
                     ray_idx = int(sx / (WIDTH / NUM_RAYS))
                     if 0 <= ray_idx < NUM_RAYS and px < self.depth_buffer[ray_idx]:
-                        # Draw door marker
                         size = max(5, int(300 / px))
-                        pygame.draw.rect(self.screen, (255, 200, 0), (int(sx) - size//2, HEIGHT//2 - size, size, size*2), 3)
-                        # Draw key required indicator
-                        if "key_required" in door:
+                        # Draw door
+                        pygame.draw.rect(self.screen, (180, 120, 60), (int(sx) - size//2, HEIGHT//2 - size, size, size*2), 3)
+                        # Draw key indicator
+                        if "key_required" in door and door["key_required"]:
                             pygame.draw.circle(self.screen, (255, 0, 0), (int(sx), HEIGHT//2 - size - 10), 5)
 
     def draw_hud(self):
@@ -1098,37 +1144,35 @@ class Game:
         bar_x = 20
         bar_y = 20
         
-        # Health bar background
         pygame.draw.rect(self.screen, (30, 30, 30), (bar_x, bar_y, bar_width, bar_height))
-        # Health bar
         health_width = int(bar_width * (self.health / self.max_health))
         health_color = (100, 255, 100) if self.health > 50 else (255, 150, 0) if self.health > 25 else (255, 50, 50)
         pygame.draw.rect(self.screen, health_color, (bar_x, bar_y, health_width, bar_height))
         pygame.draw.rect(self.screen, (150, 255, 150), (bar_x, bar_y, bar_width, bar_height), 2)
         
-        # Health text
         font = pygame.font.SysFont("georgia", 16)
         health_text = font.render(f"HP: {self.health}/{self.max_health}", True, (255, 255, 255))
         self.screen.blit(health_text, (bar_x + 5, bar_y + 2))
         
-        # Mana bar background
         bar_y += 30
         pygame.draw.rect(self.screen, (30, 30, 30), (bar_x, bar_y, bar_width, bar_height))
-        # Mana bar
         mana_width = int(bar_width * (self.mana / self.max_mana))
         pygame.draw.rect(self.screen, (100, 100, 255), (bar_x, bar_y, mana_width, bar_height))
         pygame.draw.rect(self.screen, (150, 150, 255), (bar_x, bar_y, bar_width, bar_height), 2)
         
-        # Mana text
         mana_text = font.render(f"Mana: {self.mana}/{self.max_mana}", True, (255, 255, 255))
         self.screen.blit(mana_text, (bar_x + 5, bar_y + 2))
+        
+        # Display interior/exterior status
+        status = "Interior" if self.is_in_interior else "Exterior"
+        status_text = font.render(status, True, (255, 200, 100))
+        self.screen.blit(status_text, (WIDTH - 150, 20))
         
         # Consume feedback message
         if self.consume_message_timer > 0:
             font_msg = pygame.font.SysFont("georgia", 20, bold=True)
             msg_surf = font_msg.render(self.consume_message, True, (100, 255, 100))
             msg_rect = msg_surf.get_rect(center=(WIDTH // 2, HEIGHT - 50))
-            # Draw with shadow
             shadow = font_msg.render(self.consume_message, True, (0, 0, 0))
             self.screen.blit(shadow, (msg_rect.x + 2, msg_rect.y + 2))
             self.screen.blit(msg_surf, msg_rect)
@@ -1148,7 +1192,6 @@ class Game:
     def draw_weather(self):
         if self.weather_type == 'none': return
         
-        # Determine color and properties based on weather type
         if 'rain' in self.weather_type:
             color = RAIN_COLOR
             particle_height = 12 if 'heavy' in self.weather_type else 8
@@ -1161,13 +1204,11 @@ class Game:
         else:
             return
         
-        # Draw weather particles
         for p in self.particles:
             dx, dy = p['x'] - self.player_x, p['y'] - self.player_y
             px = dx * math.cos(-self.player_angle) - dy * math.sin(-self.player_angle)
             py = dx * math.sin(-self.player_angle) + dy * math.cos(-self.player_angle)
             if px > 2:
-                # Apply wind effect to x position for sandstorms
                 if 'sand' in self.weather_type:
                     wind_offset = p.get('wind_accel', 0) * 2
                 else:
@@ -1179,9 +1220,8 @@ class Game:
                     sy = (HEIGHT // 2) + (p['z'] * (240 / px))
                     pygame.draw.rect(self.screen, color, (sx, sy, 4, particle_height))
         
-        # Add visibility obscuring effect for sandstorms
         if 'sand' in self.weather_type:
-            opacity = min(200, 50 + len(self.particles) // 3)  # More opaque with more particles
+            opacity = min(200, 50 + len(self.particles) // 3)
             overlay = pygame.Surface((WIDTH, HEIGHT))
             overlay.set_alpha(opacity)
             overlay.fill(DUST_COLOR)
@@ -1192,15 +1232,14 @@ class Game:
             for e in pygame.event.get():
                 if e.type == pygame.QUIT: return
                 if e.type == pygame.KEYDOWN:
-                    # Inventory controls
                     if self.inventory.visible:
                         self.inventory.handle_input(e.key)
                         if e.key == pygame.K_i:
                             self.inventory.toggle()
                     else:
                         if e.key == pygame.K_i: self.inventory.toggle()
-                        # Door/Teleport interaction (F key)
                         if e.key == pygame.K_f: self.try_use_door()
+                        if e.key == pygame.K_e and self.is_in_interior: self.exit_interior()
             
             if not self.inventory.visible:
                 k = pygame.key.get_pressed()
@@ -1209,16 +1248,16 @@ class Game:
                 if k[pygame.K_RIGHT]: self.player_angle += PLAYER_ROTATION_SPEED
                 
                 # WASD movement
-                if k[pygame.K_w]:  # Forward
+                if k[pygame.K_w]:
                     nx, ny = self.player_x + math.cos(self.player_angle)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle)*PLAYER_SPEED
                     if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
-                if k[pygame.K_s]:  # Backward
+                if k[pygame.K_s]:
                     nx, ny = self.player_x - math.cos(self.player_angle)*PLAYER_SPEED, self.player_y - math.sin(self.player_angle)*PLAYER_SPEED
                     if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
-                if k[pygame.K_a]:  # Strafe left
+                if k[pygame.K_a]:
                     nx, ny = self.player_x - math.cos(self.player_angle + math.pi/2)*PLAYER_SPEED, self.player_y - math.sin(self.player_angle + math.pi/2)*PLAYER_SPEED
                     if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
-                if k[pygame.K_d]:  # Strafe right
+                if k[pygame.K_d]:
                     nx, ny = self.player_x + math.cos(self.player_angle + math.pi/2)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle + math.pi/2)*PLAYER_SPEED
                     if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
             

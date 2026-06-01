@@ -67,13 +67,15 @@ class ToolMode(Enum):
     ERASE = 1
     FILL = 2
     PICK = 3
+    DOOR = 4
+    DELETE_DOOR = 5
 
 class MapEditor:
     """Integrated map editor for the game"""
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((EDITOR_WIDTH, EDITOR_HEIGHT))
-        pygame.display.set_caption("Wolfenstein 3D Map Editor")
+        pygame.display.set_caption("Wolfenstein 3D Map Editor - with Doors")
         self.clock = pygame.time.Clock()
         self.font_small = pygame.font.SysFont("georgia", 14)
         self.font_medium = pygame.font.SysFont("georgia", 16, bold=True)
@@ -82,6 +84,9 @@ class MapEditor:
         # Map data
         self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
         self.map_filename = MAP_DATA_FILE
+        
+        # Doors list
+        self.doors = []
         
         # Editor state
         self.tool_mode = ToolMode.DRAW
@@ -103,21 +108,20 @@ class MapEditor:
         self.status_timer = 0
         self.show_grid = True
         self.show_help = False
+        self.selected_door = None
+        self.door_input_mode = None
+        self.door_input_text = ""
         
         # Load existing map if available
         self.load_map()
 
     def save_state(self):
         """Save current map state to history for undo/redo"""
-        # Remove any redo history when making new changes
         self.history = self.history[:self.history_index + 1]
-        
-        # Deep copy current map
         state = [row[:] for row in self.map]
         self.history.append(state)
         self.history_index = len(self.history) - 1
         
-        # Limit history size
         if len(self.history) > self.max_history:
             self.history.pop(0)
             self.history_index -= 1
@@ -199,10 +203,50 @@ class MapEditor:
             filled.add((x, y))
             self.map[y][x] = fill_value
             
-            # Add neighbors
             stack.extend([(x+1, y), (x-1, y), (x, y+1), (x, y-1)])
         
         self.set_status(f"Filled {len(filled)} tiles")
+
+    def place_door(self, grid_x, grid_y):
+        """Place a door at grid coordinates"""
+        if not self.is_valid_grid_pos(grid_x, grid_y):
+            return
+        
+        # Convert grid to world coordinates
+        world_x = grid_x * TILE_SIZE + TILE_SIZE // 2
+        world_y = grid_y * TILE_SIZE + TILE_SIZE // 2
+        
+        # Check if door already exists at this location
+        for door in self.doors:
+            if abs(door["x"] - world_x) < 10 and abs(door["y"] - world_y) < 10:
+                self.selected_door = door
+                self.set_status(f"Selected door: {door['name']}")
+                return
+        
+        # Create new door
+        new_door = {
+            "x": world_x,
+            "y": world_y,
+            "name": f"Door {len(self.doors) + 1}",
+            "key_required": "Brass Key",
+            "interior_x": 100,
+            "interior_y": 100
+        }
+        self.doors.append(new_door)
+        self.selected_door = new_door
+        self.set_status(f"Placed door at ({grid_x}, {grid_y})")
+
+    def delete_door_at(self, grid_x, grid_y):
+        """Delete a door at grid coordinates"""
+        world_x = grid_x * TILE_SIZE + TILE_SIZE // 2
+        world_y = grid_y * TILE_SIZE + TILE_SIZE // 2
+        
+        for i, door in enumerate(self.doors):
+            if abs(door["x"] - world_x) < 10 and abs(door["y"] - world_y) < 10:
+                self.doors.pop(i)
+                self.selected_door = None
+                self.set_status(f"Deleted door")
+                return
 
     def handle_mouse_click(self, pos, button):
         """Handle mouse clicks"""
@@ -222,6 +266,10 @@ class MapEditor:
                 if self.is_valid_grid_pos(grid_x, grid_y):
                     self.current_tile = TileType(self.map[grid_y][grid_x])
                     self.set_status(f"Picked tile: {self.current_tile.name}")
+            elif self.tool_mode == ToolMode.DOOR:
+                self.place_door(grid_x, grid_y)
+            elif self.tool_mode == ToolMode.DELETE_DOOR:
+                self.delete_door_at(grid_x, grid_y)
 
     def handle_mouse_motion(self, pos):
         """Handle mouse motion for dragging"""
@@ -245,7 +293,6 @@ class MapEditor:
         """Handle keyboard input"""
         keys = pygame.key.get_pressed()
         
-        # Pan with arrow keys
         pan_speed = 5
         if keys[pygame.K_LEFT]:
             self.grid_offset_x += pan_speed
@@ -256,7 +303,6 @@ class MapEditor:
         if keys[pygame.K_DOWN]:
             self.grid_offset_y -= pan_speed
         
-        # Zoom with +/-
         if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]:
             if self.zoom < 2.0:
                 self.zoom *= 1.02
@@ -294,8 +340,13 @@ class MapEditor:
         elif key == pygame.K_4:
             self.tool_mode = ToolMode.PICK
             self.set_status("Tool: Pick Tile")
+        elif key == pygame.K_5:
+            self.tool_mode = ToolMode.DOOR
+            self.set_status("Tool: Place Door (Click to place)")
+        elif key == pygame.K_6:
+            self.tool_mode = ToolMode.DELETE_DOOR
+            self.set_status("Tool: Delete Door (Click door to delete)")
         elif key == pygame.K_SPACE:
-            # Clear map (borders only)
             self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
             for y in range(1, MAP_SIZE - 1):
                 for x in range(1, MAP_SIZE - 1):
@@ -306,6 +357,7 @@ class MapEditor:
     def new_map(self):
         """Create a new map"""
         self.map = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        self.doors = []
         self.history = []
         self.history_index = -1
         self.save_state()
@@ -314,10 +366,14 @@ class MapEditor:
     def save_map(self):
         """Save map to JSON file"""
         try:
-            data = {'map': self.map, 'map_size': MAP_SIZE}
+            data = {
+                'map': self.map,
+                'map_size': MAP_SIZE,
+                'doors': self.doors
+            }
             with open(self.map_filename, 'w') as f:
                 json.dump(data, f, indent=2)
-            self.set_status(f"Map saved to {self.map_filename}")
+            self.set_status(f"Map saved with {len(self.doors)} door(s)")
         except Exception as e:
             self.set_status(f"Error saving map: {str(e)}")
 
@@ -328,7 +384,8 @@ class MapEditor:
                 with open(self.map_filename, 'r') as f:
                     data = json.load(f)
                     self.map = data.get('map', self.map)
-                    self.set_status(f"Map loaded from {self.map_filename}")
+                    self.doors = data.get('doors', [])
+                    self.set_status(f"Loaded map with {len(self.doors)} door(s)")
                     self.history = []
                     self.history_index = -1
                     self.save_state()
@@ -339,17 +396,14 @@ class MapEditor:
         """Draw the map grid"""
         self.screen.fill((30, 30, 35))
         
-        # Draw grid lines
         if self.show_grid:
             grid_color = (60, 60, 70)
             
-            # Vertical lines
             x = self.grid_offset_x
             while x < EDITOR_WIDTH:
                 pygame.draw.line(self.screen, grid_color, (x, 0), (x, EDITOR_HEIGHT), 1)
                 x += int(GRID_SIZE * self.zoom)
             
-            # Horizontal lines
             y = self.grid_offset_y
             while y < EDITOR_HEIGHT:
                 pygame.draw.line(self.screen, grid_color, (0, y), (EDITOR_WIDTH, y), 1)
@@ -362,22 +416,33 @@ class MapEditor:
                 cell_size = int(GRID_SIZE * self.zoom)
                 
                 if self.map[grid_y][grid_x] == 1:
-                    # Wall tile
                     pygame.draw.rect(self.screen, (120, 100, 80), 
                                    (screen_x, screen_y, cell_size, cell_size))
                     pygame.draw.rect(self.screen, (80, 60, 40), 
                                    (screen_x, screen_y, cell_size, cell_size), 1)
                 else:
-                    # Empty tile
                     pygame.draw.rect(self.screen, (50, 70, 50), 
                                    (screen_x, screen_y, cell_size, cell_size))
                     pygame.draw.rect(self.screen, (70, 90, 70), 
                                    (screen_x, screen_y, cell_size, cell_size), 1)
+        
+        # Draw doors
+        for door in self.doors:
+            # Convert world coords to screen coords
+            grid_x = door["x"] // TILE_SIZE
+            grid_y = door["y"] // TILE_SIZE
+            screen_x, screen_y = self.grid_to_screen(grid_x, grid_y)
+            cell_size = int(GRID_SIZE * self.zoom)
+            
+            # Door color (yellow for normal, red for selected)
+            color = (255, 100, 0) if door == self.selected_door else (255, 200, 0)
+            pygame.draw.rect(self.screen, color, (screen_x + 2, screen_y + 2, cell_size - 4, cell_size - 4), 3)
+            pygame.draw.circle(self.screen, color, (screen_x + cell_size // 2, screen_y + cell_size // 2), 4)
 
     def draw_ui(self):
         """Draw user interface elements"""
         # Tool indicator
-        tool_text = f"Tool: {self.tool_mode.name} | Tile: {self.current_tile.name}"
+        tool_text = f"Tool: {self.tool_mode.name}"
         tool_surf = self.font_medium.render(tool_text, True, (200, 200, 200))
         self.screen.blit(tool_surf, (10, 10))
         
@@ -390,29 +455,35 @@ class MapEditor:
         # Coordinates at cursor
         grid_x, grid_y = self.screen_to_grid(self.mouse_pos[0], self.mouse_pos[1])
         if self.is_valid_grid_pos(grid_x, grid_y):
-            coord_text = f"Grid: ({grid_x}, {grid_y}) | Value: {self.map[grid_y][grid_x]}"
+            coord_text = f"Grid: ({grid_x}, {grid_y}) | Doors: {len(self.doors)}"
             coord_surf = self.font_small.render(coord_text, True, (200, 200, 200))
-            self.screen.blit(coord_surf, (10, EDITOR_HEIGHT - 60))
+            self.screen.blit(coord_surf, (10, EDITOR_HEIGHT - 80))
         
         # Zoom level
         zoom_text = f"Zoom: {self.zoom:.2f}x"
         zoom_surf = self.font_small.render(zoom_text, True, (200, 200, 200))
-        self.screen.blit(zoom_surf, (10, EDITOR_HEIGHT - 35))
+        self.screen.blit(zoom_surf, (10, EDITOR_HEIGHT - 55))
+        
+        # Selected door info
+        if self.selected_door:
+            door_text = f"Door: {self.selected_door['name']} | Key: {self.selected_door['key_required']}"
+            door_surf = self.font_small.render(door_text, True, (255, 200, 100))
+            self.screen.blit(door_surf, (10, EDITOR_HEIGHT - 30))
         
         # Help
-        help_y = EDITOR_HEIGHT - 200
+        help_y = EDITOR_HEIGHT - 250
         if self.show_help:
             help_lines = [
                 "--- CONTROLS ---",
-                "1/2/3/4: Draw/Erase/Fill/Pick tools",
+                "1/2/3/4: Draw/Erase/Fill/Pick",
+                "5: Place Door | 6: Delete Door",
                 "Left Click: Use current tool",
-                "Arrow Keys: Pan view",
-                "+/-: Zoom",
-                "G: Toggle grid | H: Toggle help",
-                "SPACE: Clear map",
-                "Ctrl+Z: Undo | Ctrl+Y: Redo",
-                "Ctrl+S: Save | Ctrl+L: Load",
-                "Ctrl+N: New Map | ESC: Exit to Game"
+                "Arrow Keys: Pan | +/-: Zoom",
+                "G: Toggle Grid | H: Toggle Help",
+                "SPACE: Clear Map",
+                "Ctrl+Z/Y: Undo/Redo",
+                "Ctrl+S/L/N: Save/Load/New",
+                "ESC: Exit Editor"
             ]
             
             for i, line in enumerate(help_lines):
@@ -551,6 +622,7 @@ class Game:
         # Systems
         self.inventory = Inventory(on_consume_callback=self.consume_item)
         self.map = self.load_or_generate_map()
+        self.doors = self.load_doors()
         self.player_x, self.player_y = self.get_safe_spawn()
         self.player_angle = 0
         
@@ -591,18 +663,7 @@ class Game:
         self.consume_message = ""
         self.consume_message_timer = 0
         
-        # Door/Teleport System with keys
-        self.doors = [
-            {
-                "x": 500, "y": 500, 
-                "name": "Wooden Door", 
-                "key_required": "Brass Key",
-                "interior_map": self.generate_interior(),
-                "exit_x": 100, "exit_y": 100,
-                "entry_exterior": (500, 500)
-            }
-        ]
-        self.door_range = 60  # Distance to interact with door
+        # Interior/Exterior tracking
         self.is_in_interior = False
         self.current_interior_map = None
         self.exterior_map = self.map
@@ -623,14 +684,43 @@ class Game:
         # Vegetation system
         self.vegetation = self.generate_vegetation()
 
+    def load_doors(self):
+        """Load doors from map data file"""
+        try:
+            if os.path.exists(MAP_DATA_FILE):
+                with open(MAP_DATA_FILE, 'r') as f:
+                    data = json.load(f)
+                    doors = data.get('doors', [])
+                    # Ensure each door has required fields for interior
+                    for door in doors:
+                        if "interior_map" not in door:
+                            door["interior_map"] = self.generate_interior()
+                        if "exit_x" not in door:
+                            door["exit_x"] = 100
+                        if "exit_y" not in door:
+                            door["exit_y"] = 100
+                    return doors
+        except:
+            pass
+        
+        # Default doors
+        return [
+            {
+                "x": 500, "y": 500, 
+                "name": "Wooden Door", 
+                "key_required": "Brass Key",
+                "interior_map": self.generate_interior(),
+                "exit_x": 100, "exit_y": 100
+            }
+        ]
+
     def generate_vegetation(self):
         """Generate trees and shrubs in open areas"""
         vegetation = []
         attempts = 0
-        while len(vegetation) < 25 and attempts < 200:  # Place up to 25 vegetation objects
+        while len(vegetation) < 25 and attempts < 200:
             x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
             y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
-            # Check if position is in open area (not wall)
             if self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)] == 0:
                 veg_type = random.choice(['tree', 'shrub'])
                 vegetation.append({
@@ -644,11 +734,9 @@ class Game:
     def generate_interior(self):
         """Generate a simple interior map"""
         interior = [[1 for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
-        # Create a simple room
         for y in range(5, 25):
             for x in range(5, 25):
                 interior[y][x] = 0
-        # Add some interior walls
         for x in range(8, 22):
             interior[12][x] = 1
         return interior
@@ -668,10 +756,9 @@ class Game:
         """Generate randomly placed torches in open areas"""
         torches = []
         attempts = 0
-        while len(torches) < 15 and attempts < 100:  # Place up to 15 torches
+        while len(torches) < 15 and attempts < 100:
             x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
             y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
-            # Check if position is in open area (not wall)
             if self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)] == 0:
                 torches.append({"x": x, "y": y, "light": 255})
             attempts += 1
@@ -681,13 +768,11 @@ class Game:
         """Calculate lighting contribution from all torches"""
         torch_light = 0
         for torch in self.torches:
-            # Calculate distance from player to torch
             dx = torch["x"] - px
             dy = torch["y"] - py
             dist = math.sqrt(dx*dx + dy*dy)
             
             if dist < self.torch_light_range:
-                # Quadratic falloff
                 light_contrib = int((1 - (dist / self.torch_light_range)**2) * 80)
                 torch_light = max(torch_light, light_contrib)
         return torch_light
@@ -711,15 +796,14 @@ class Game:
         sun_y = HEIGHT // 4
         sun_size = 40
         
-        if 600 <= self.time < 1800:  # Sun visible during day
+        if 600 <= self.time < 1800:
             progress = (self.time - 600) / (1800 - 600)
             sun_x = int(50 + progress * (WIDTH - 100))
             sun_y = int(HEIGHT // 4 + 30 * math.sin(progress * math.pi))
             
-            # Draw sun with glow
             pygame.draw.circle(self.screen, (255, 200, 50), (sun_x, sun_y), sun_size + 5)
             pygame.draw.circle(self.screen, (255, 220, 100), (sun_x, sun_y), sun_size)
-        else:  # Moon visible at night
+        else:
             if self.time < 600:
                 progress = self.time / 600
             else:
@@ -728,7 +812,6 @@ class Game:
             moon_x = int(WIDTH // 2 + 100 * math.cos(progress * math.pi))
             moon_y = int(HEIGHT // 4 + 30)
             
-            # Draw moon with craters
             pygame.draw.circle(self.screen, (220, 220, 200), (moon_x, moon_y), sun_size - 5)
             pygame.draw.circle(self.screen, (100, 100, 80), (moon_x - 10, moon_y - 5), 4)
             pygame.draw.circle(self.screen, (100, 100, 80), (moon_x + 8, moon_y + 8), 3)
@@ -789,7 +872,7 @@ class Game:
         """Check if player is near a door and return it"""
         for door in self.doors:
             dist = math.sqrt((self.player_x - door["x"])**2 + (self.player_y - door["y"])**2)
-            if dist < self.door_range:
+            if dist < 60:
                 return door
         return None
 
@@ -803,7 +886,6 @@ class Game:
                     self.consume_message_timer = 120
                     return
             
-            # Enter interior
             self.exterior_player_pos = (self.player_x, self.player_y)
             self.exterior_map = self.map
             self.map = door["interior_map"]
@@ -826,18 +908,17 @@ class Game:
         return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
     def get_smooth_ambient_light(self):
-        """Calculate smooth ambient light based on time of day"""
         t = self.time
         
-        if 300 <= t < 900:  # Sunrise
+        if 300 <= t < 900:
             progress = (t - 300) / 600
             return int(70 + (255 - 70) * progress)
-        elif 900 <= t < 1500:  # Full daylight
+        elif 900 <= t < 1500:
             return 255
-        elif 1500 <= t < 1800:  # Sunset
+        elif 1500 <= t < 1800:
             progress = (t - 1500) / 300
             return int(255 - (255 - 70) * progress)
-        else:  # Night
+        else:
             return 70
 
     def get_sky_color(self):
@@ -875,7 +956,6 @@ class Game:
         return tex
 
     def load_floor_texture(self):
-        """Load floor texture from file"""
         try:
             import os
             texture_path = os.path.join(os.path.dirname(__file__), "Dirt_Road_64x64.png")
@@ -891,7 +971,6 @@ class Game:
             return surf
 
     def load_cloud_sprite(self):
-        """Load cloud sprite from file"""
         try:
             import os
             sprite_path = os.path.join(os.path.dirname(__file__), CLOUD_SPRITE_PATH)
@@ -905,7 +984,6 @@ class Game:
             return surf
 
     def get_scaled_cloud_sprite(self, scale):
-        """Get scaled cloud sprite from cache or create new one"""
         if scale not in self.cloud_sprites_cache:
             w, h = self.cloud_sprite.get_size()
             new_size = (int(w * scale), int(h * scale))
@@ -913,7 +991,6 @@ class Game:
         return self.cloud_sprites_cache[scale]
 
     def generate_parallax_clouds(self):
-        """Generate clouds with parallax depth layers"""
         clouds = []
         for layer in range(CLOUD_LAYERS):
             num_clouds = 3 + layer
@@ -944,7 +1021,6 @@ class Game:
             self.particles.append(p)
 
     def transition_weather(self):
-        """Randomly transition to a new weather type"""
         if random.random() < 0.3:
             new_weather = self.weather_type
         else:
@@ -1011,22 +1087,18 @@ class Game:
                         size = max(3, int(300 / px))
                         
                         if veg["type"] == "tree":
-                            # Draw tree: trunk and foliage
                             trunk_height = int(size * 0.4)
                             pygame.draw.rect(self.screen, TREE_TRUNK_COLOR, 
                                            (int(sx) - size//8, HEIGHT//2 - trunk_height, size//4, trunk_height))
                             pygame.draw.circle(self.screen, TREE_FOLIAGE_COLOR, 
                                             (int(sx), HEIGHT//2 - trunk_height - size//3), size//2)
                         else:
-                            # Draw shrub
                             pygame.draw.circle(self.screen, SHRUB_COLOR, (int(sx), HEIGHT//2), size)
 
     def draw(self):
-        # 1. Sky & Ground
         sky_c = self.get_sky_color()
         self.screen.fill(sky_c, (0, 0, WIDTH, HEIGHT // 2))
         
-        # Draw celestial objects
         self.draw_stars()
         self.draw_sun_moon()
         
@@ -1050,7 +1122,6 @@ class Game:
                 self.screen.blit(scaled_sprite, (x_pos - WIDTH - 50, c['y']))
 
         t_mult = self.ambient_light / 255.0
-        # Draw textured floor with proper perspective
         for y in range(HEIGHT // 2, HEIGHT, 1):
             shade = max(0.1, min(1.0, ((y - HEIGHT/2) / (HEIGHT/2.0)) * 1.5))
             intensity = int(255 * shade * t_mult)
@@ -1069,7 +1140,6 @@ class Game:
                 scaled_tex.fill((intensity, intensity, intensity), special_flags=pygame.BLEND_RGB_MULT)
                 self.screen.blit(scaled_tex, (x, y))
 
-        # 2. Raycasting
         start_a = self.player_angle - FOV / 2
         for ray in range(NUM_RAYS):
             angle = start_a + ray * DELTA_ANGLE
@@ -1089,8 +1159,7 @@ class Game:
                     break
             else: self.depth_buffer[ray] = MAX_DEPTH
 
-        # Draw objects
-        self.draw_vegetation()  # Draw vegetation
+        self.draw_vegetation()
         self.draw_quest_item()
         self.draw_doors()
         self.draw_torches()
@@ -1131,9 +1200,7 @@ class Game:
                     ray_idx = int(sx / (WIDTH / NUM_RAYS))
                     if 0 <= ray_idx < NUM_RAYS and px < self.depth_buffer[ray_idx]:
                         size = max(5, int(300 / px))
-                        # Draw door
                         pygame.draw.rect(self.screen, (180, 120, 60), (int(sx) - size//2, HEIGHT//2 - size, size, size*2), 3)
-                        # Draw key indicator
                         if "key_required" in door and door["key_required"]:
                             pygame.draw.circle(self.screen, (255, 0, 0), (int(sx), HEIGHT//2 - size - 10), 5)
 
@@ -1163,12 +1230,10 @@ class Game:
         mana_text = font.render(f"Mana: {self.mana}/{self.max_mana}", True, (255, 255, 255))
         self.screen.blit(mana_text, (bar_x + 5, bar_y + 2))
         
-        # Display interior/exterior status
         status = "Interior" if self.is_in_interior else "Exterior"
         status_text = font.render(status, True, (255, 200, 100))
         self.screen.blit(status_text, (WIDTH - 150, 20))
         
-        # Consume feedback message
         if self.consume_message_timer > 0:
             font_msg = pygame.font.SysFont("georgia", 20, bold=True)
             msg_surf = font_msg.render(self.consume_message, True, (100, 255, 100))
@@ -1243,11 +1308,9 @@ class Game:
             
             if not self.inventory.visible:
                 k = pygame.key.get_pressed()
-                # Rotation (arrow keys)
                 if k[pygame.K_LEFT]: self.player_angle -= PLAYER_ROTATION_SPEED
                 if k[pygame.K_RIGHT]: self.player_angle += PLAYER_ROTATION_SPEED
                 
-                # WASD movement
                 if k[pygame.K_w]:
                     nx, ny = self.player_x + math.cos(self.player_angle)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle)*PLAYER_SPEED
                     if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny

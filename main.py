@@ -951,18 +951,15 @@ class Game:
         while len(vegetation) < 25 and attempts < 200:
             x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
             y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
-            grid_x = int(x / TILE_SIZE)
-            grid_y = int(y / TILE_SIZE)
-            if 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE:
-                map_cell = self.map[grid_y][grid_x]
-                map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-                if map_type == 0:
-                    veg_type = random.choice(['tree', 'shrub'])
-                    vegetation.append({
-                        "x": x, "y": y, 
-                        "type": veg_type,
-                        "size": random.randint(8, 15) if veg_type == 'tree' else random.randint(4, 8)
-                    })
+            map_cell = self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)]
+            map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+            if map_type == 0:
+                veg_type = random.choice(['tree', 'shrub'])
+                vegetation.append({
+                    "x": x, "y": y, 
+                    "type": veg_type,
+                    "size": random.randint(8, 15) if veg_type == 'tree' else random.randint(4, 8)
+                })
             attempts += 1
         return vegetation
 
@@ -1006,13 +1003,10 @@ class Game:
         while len(torches) < 15 and attempts < 100:
             x = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
             y = random.randint(5, MAP_SIZE - 5) * TILE_SIZE + TILE_SIZE // 2
-            grid_x = int(x / TILE_SIZE)
-            grid_y = int(y / TILE_SIZE)
-            if 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE:
-                map_cell = self.map[grid_y][grid_x]
-                map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-                if map_type == 0:
-                    torches.append({"x": x, "y": y, "light": 255})
+            map_cell = self.map[int(y/TILE_SIZE)][int(x/TILE_SIZE)]
+            map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+            if map_type == 0:
+                torches.append({"x": x, "y": y, "light": 255})
             attempts += 1
         return torches
 
@@ -1198,40 +1192,13 @@ class Game:
 
     def get_safe_spawn(self):
         """Get a safe spawn position in an empty tile with bounds checking"""
-        # Try multiple times to find a valid spawn
-        for attempt in range(500):
-            r = random.randint(2, MAP_SIZE - 3)
-            c = random.randint(2, MAP_SIZE - 3)
-            
-            # Bounds check
-            if not (0 <= r < MAP_SIZE and 0 <= c < MAP_SIZE):
-                continue
-            
+        for _ in range(100):
+            r, c = random.randint(1, MAP_SIZE-1), random.randint(1, MAP_SIZE-1)
             map_cell = self.map[r][c]
             map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-            
-            # Check if current cell is empty
-            if map_type != 0:
-                continue
-            
-            # Check adjacent cells are also empty for safety
-            all_empty = True
-            for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < MAP_SIZE and 0 <= nc < MAP_SIZE:
-                    adj_cell = self.map[nr][nc]
-                    adj_type = adj_cell['type'] if isinstance(adj_cell, dict) else adj_cell
-                    if adj_type != 0:
-                        all_empty = False
-                        break
-            
-            if all_empty:
-                spawn_x = c * TILE_SIZE + TILE_SIZE // 2
-                spawn_y = r * TILE_SIZE + TILE_SIZE // 2
-                return (spawn_x, spawn_y)
-        
-        # Fallback spawn in the center
-        return (MAP_SIZE * TILE_SIZE // 2, MAP_SIZE * TILE_SIZE // 2)
+            if map_type == 0: 
+                return (c * TILE_SIZE + 32, r * TILE_SIZE + 32)
+        return (128, 128)
 
     def create_brick_texture(self):
         tex = pygame.Surface((TILE_SIZE, TILE_SIZE))
@@ -1604,41 +1571,52 @@ class Game:
                 if k[pygame.K_RIGHT]: self.player_angle += PLAYER_ROTATION_SPEED
                 
                 if k[pygame.K_w]:
-                    nx, ny = self.player_x + math.cos(self.player_angle)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle)*PLAYER_SPEED
+                    nx = self.player_x + math.cos(self.player_angle) * PLAYER_SPEED
+                    ny = self.player_y + math.sin(self.player_angle) * PLAYER_SPEED
                     grid_x = int(nx / TILE_SIZE)
                     grid_y = int(ny / TILE_SIZE)
-                    # Bounds checking
                     if 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE:
                         map_cell = self.map[grid_y][grid_x]
                         map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-                        if map_type == 0: self.player_x, self.player_y = nx, ny
+                        if map_type == 0:
+                            self.player_x = nx
+                            self.player_y = ny
+                
                 if k[pygame.K_s]:
-                    nx, ny = self.player_x - math.cos(self.player_angle)*PLAYER_SPEED, self.player_y - math.sin(self.player_angle)*PLAYER_SPEED
+                    nx = self.player_x - math.cos(self.player_angle) * PLAYER_SPEED
+                    ny = self.player_y - math.sin(self.player_angle) * PLAYER_SPEED
                     grid_x = int(nx / TILE_SIZE)
                     grid_y = int(ny / TILE_SIZE)
-                    # Bounds checking
                     if 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE:
                         map_cell = self.map[grid_y][grid_x]
                         map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-                        if map_type == 0: self.player_x, self.player_y = nx, ny
+                        if map_type == 0:
+                            self.player_x = nx
+                            self.player_y = ny
+                
                 if k[pygame.K_a]:
-                    nx, ny = self.player_x - math.cos(self.player_angle + math.pi/2)*PLAYER_SPEED, self.player_y - math.sin(self.player_angle + math.pi/2)*PLAYER_SPEED
+                    nx = self.player_x - math.cos(self.player_angle + math.pi/2) * PLAYER_SPEED
+                    ny = self.player_y - math.sin(self.player_angle + math.pi/2) * PLAYER_SPEED
                     grid_x = int(nx / TILE_SIZE)
                     grid_y = int(ny / TILE_SIZE)
-                    # Bounds checking
                     if 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE:
                         map_cell = self.map[grid_y][grid_x]
                         map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-                        if map_type == 0: self.player_x, self.player_y = nx, ny
+                        if map_type == 0:
+                            self.player_x = nx
+                            self.player_y = ny
+                
                 if k[pygame.K_d]:
-                    nx, ny = self.player_x + math.cos(self.player_angle + math.pi/2)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle + math.pi/2)*PLAYER_SPEED
+                    nx = self.player_x + math.cos(self.player_angle + math.pi/2) * PLAYER_SPEED
+                    ny = self.player_y + math.sin(self.player_angle + math.pi/2) * PLAYER_SPEED
                     grid_x = int(nx / TILE_SIZE)
                     grid_y = int(ny / TILE_SIZE)
-                    # Bounds checking
                     if 0 <= grid_x < MAP_SIZE and 0 <= grid_y < MAP_SIZE:
                         map_cell = self.map[grid_y][grid_x]
                         map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-                        if map_type == 0: self.player_x, self.player_y = nx, ny
+                        if map_type == 0:
+                            self.player_x = nx
+                            self.player_y = ny
             
             self.update(); self.draw(); pygame.display.flip(); self.clock.tick(FPS)
 

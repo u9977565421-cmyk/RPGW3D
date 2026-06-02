@@ -1179,26 +1179,60 @@ class Game:
         return (5, 5, 20)
 
     def generate_dungeon(self):
+        """Generate dungeon with better empty space distribution"""
+        # Start with all walls
         d_map = [[{'type': 1, 'texture': 'brick'} for _ in range(MAP_SIZE)] for _ in range(MAP_SIZE)]
+        
+        # Use a better algorithm: recursive backtracking maze generation
+        # This creates connected paths and more playable space
         x, y = MAP_SIZE // 2, MAP_SIZE // 2
         d_map[y][x] = {'type': 0, 'texture': None}
-        for _ in range(600):
-            move = random.choice([(0,1), (0,-1), (1,0), (-1,0)])
-            nx, ny = x + move[0], y + move[1]
-            if 1 <= nx < MAP_SIZE-1 and 1 <= ny < MAP_SIZE-1:
-                x, y = nx, ny
-                d_map[y][x] = {'type': 0, 'texture': None}
+        
+        # Increase iterations significantly to create more open space
+        visited = set()
+        stack = [(x, y)]
+        
+        while stack:
+            x, y = stack[-1]
+            visited.add((x, y))
+            
+            # Get random directions
+            directions = [(0, 2), (2, 0), (0, -2), (-2, 0)]
+            random.shuffle(directions)
+            
+            found_unvisited = False
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                
+                if 1 <= nx < MAP_SIZE - 1 and 1 <= ny < MAP_SIZE - 1 and (nx, ny) not in visited:
+                    # Carve path to neighbor
+                    d_map[y + dy//2][x + dx//2] = {'type': 0, 'texture': None}
+                    d_map[ny][nx] = {'type': 0, 'texture': None}
+                    
+                    stack.append((nx, ny))
+                    found_unvisited = True
+                    break
+            
+            if not found_unvisited:
+                stack.pop()
+        
+        # Additional pass: create some open areas by carving random paths
+        for _ in range(150):
+            rx, ry = random.randint(2, MAP_SIZE - 3), random.randint(2, MAP_SIZE - 3)
+            d_map[ry][rx] = {'type': 0, 'texture': None}
+        
         return d_map
 
     def get_safe_spawn(self):
         """Get a safe spawn position in an empty tile with bounds checking"""
-        for _ in range(100):
-            r, c = random.randint(1, MAP_SIZE-1), random.randint(1, MAP_SIZE-1)
-            map_cell = self.map[r][c]
-            map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
-            if map_type == 0: 
-                return (c * TILE_SIZE + 32, r * TILE_SIZE + 32)
-        return (128, 128)
+        for _ in range(200):  # Increased attempts
+            r, c = random.randint(1, MAP_SIZE-2), random.randint(1, MAP_SIZE-2)
+            if r < len(self.map) and c < len(self.map[r]):
+                map_cell = self.map[r][c]
+                map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                if map_type == 0: 
+                    return (c * TILE_SIZE + 32, r * TILE_SIZE + 32)
+        return (5 * TILE_SIZE, 5 * TILE_SIZE)
 
     def create_brick_texture(self):
         tex = pygame.Surface((TILE_SIZE, TILE_SIZE))
@@ -1581,7 +1615,6 @@ class Game:
                         if map_type == 0:
                             self.player_x = nx
                             self.player_y = ny
-                
                 if k[pygame.K_s]:
                     nx = self.player_x - math.cos(self.player_angle) * PLAYER_SPEED
                     ny = self.player_y - math.sin(self.player_angle) * PLAYER_SPEED
@@ -1593,7 +1626,6 @@ class Game:
                         if map_type == 0:
                             self.player_x = nx
                             self.player_y = ny
-                
                 if k[pygame.K_a]:
                     nx = self.player_x - math.cos(self.player_angle + math.pi/2) * PLAYER_SPEED
                     ny = self.player_y - math.sin(self.player_angle + math.pi/2) * PLAYER_SPEED
@@ -1605,7 +1637,6 @@ class Game:
                         if map_type == 0:
                             self.player_x = nx
                             self.player_y = ny
-                
                 if k[pygame.K_d]:
                     nx = self.player_x + math.cos(self.player_angle + math.pi/2) * PLAYER_SPEED
                     ny = self.player_y + math.sin(self.player_angle + math.pi/2) * PLAYER_SPEED

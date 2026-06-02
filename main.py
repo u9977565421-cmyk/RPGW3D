@@ -1566,16 +1566,24 @@ class Game:
                 
                 if k[pygame.K_w]:
                     nx, ny = self.player_x + math.cos(self.player_angle)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle)*PLAYER_SPEED
-                    if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
+                    map_cell = self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)]
+                    map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                    if map_type == 0: self.player_x, self.player_y = nx, ny
                 if k[pygame.K_s]:
                     nx, ny = self.player_x - math.cos(self.player_angle)*PLAYER_SPEED, self.player_y - math.sin(self.player_angle)*PLAYER_SPEED
-                    if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
+                    map_cell = self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)]
+                    map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                    if map_type == 0: self.player_x, self.player_y = nx, ny
                 if k[pygame.K_a]:
                     nx, ny = self.player_x - math.cos(self.player_angle + math.pi/2)*PLAYER_SPEED, self.player_y - math.sin(self.player_angle + math.pi/2)*PLAYER_SPEED
-                    if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
+                    map_cell = self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)]
+                    map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                    if map_type == 0: self.player_x, self.player_y = nx, ny
                 if k[pygame.K_d]:
                     nx, ny = self.player_x + math.cos(self.player_angle + math.pi/2)*PLAYER_SPEED, self.player_y + math.sin(self.player_angle + math.pi/2)*PLAYER_SPEED
-                    if self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)] == 0: self.player_x, self.player_y = nx, ny
+                    map_cell = self.map[int(ny/TILE_SIZE)][int(nx/TILE_SIZE)]
+                    map_type = map_cell['type'] if isinstance(map_cell, dict) else map_cell
+                    if map_type == 0: self.player_x, self.player_y = nx, ny
             
             self.update(); self.draw(); pygame.display.flip(); self.clock.tick(FPS)
 
